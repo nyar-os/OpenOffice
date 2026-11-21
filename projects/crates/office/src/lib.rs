@@ -485,4 +485,40 @@ mod tests {
         assert_eq!(results[1]["ok"], json!(false));
         let _ = fs::remove_dir_all(&out_dir);
     }
+
+    /// A `.pdf` route must not accept plain text that has no PDF header.
+    #[test]
+    fn container_probe_refuses_a_pdf_route_for_plain_text() {
+        let dir = std::env::temp_dir().join(format!("open-office-probe-text-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("notes.pdf");
+        fs::write(&path, b"just words").expect("write probe");
+        let error = verify_container(&path, Kind::Pdf).expect_err("plain text is not a PDF");
+        assert!(error.message().contains("notes.pdf is routed as pdf"), "unexpected message: {}", error.message());
+        assert!(error.message().contains("plain text has no container header"), "the probe evidence is quoted: {}", error.message());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// PDF bytes routed by a spreadsheets extension are refused with the probe evidence.
+    #[test]
+    fn container_probe_refuses_pdf_bytes_routed_as_a_sheet() {
+        let dir = std::env::temp_dir().join(format!("open-office-probe-sheet-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("sheet.xlsx");
+        fs::write(&path, b"%PDF-1.7\n").expect("write probe");
+        let error = verify_container(&path, Kind::Excel).expect_err("PDF bytes are not a sheet");
+        assert!(error.message().contains("sheet.xlsx is routed as excel"), "unexpected message: {}", error.message());
+        assert!(error.message().contains("identifies a PDF stream"), "the probe evidence is quoted: {}", error.message());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn container_probe_accepts_a_pdf_that_really_is_one() {
+        let dir = std::env::temp_dir().join(format!("open-office-probe-pdf-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("notes.pdf");
+        fs::write(&path, b"%PDF-1.7\n").expect("write probe");
+        verify_container(&path, Kind::Pdf).expect("a PDF header matches the PDF route");
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
