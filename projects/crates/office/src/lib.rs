@@ -10,6 +10,8 @@
 use std::{
     fmt, fs,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use document_formats::detect::{ContainerKind, DetectionConfidence, detect_bytes};
@@ -128,6 +130,15 @@ impl fmt::Display for OfficeError {
 }
 
 impl std::error::Error for OfficeError {}
+
+/// Options that refine one conversion request.
+///
+/// Defaults preserve the behaviour of [`Office::convert`].
+#[derive(Debug, Clone, Default)]
+pub struct ConvertOptions {
+    /// One-based page ranges such as `1-3,5`, for PDF text targets only.
+    pub pages: Option<String>,
+}
 
 /// The four-engine inspector and converter.
 #[derive(Debug, Clone, Copy, Default)]
@@ -297,15 +308,33 @@ impl Office {
     }
 
     /// Converts one document into a format the owning engine writes.
-    pub fn convert(
+    pub fn convert(&self, input: &Path, format: &str, out: &Path, overwrite: bool) -> Result<Value, OfficeError> {
+        self.convert_with(input, format, out, overwrite, &ConvertOptions::default())
+    }
+
+    /// Converts one document with explicit options.
+    ///
+    /// [`ConvertOptions::pages`] limits a PDF text conversion to one-based page
+    /// ranges such as `1-3,5`; every other conversion ignores it because no
+    /// engine accepts a partial export.
+    pub fn convert_with(
         &self,
         input: &Path,
         format: &str,
         out: &Path,
         overwrite: bool,
+        options: &ConvertOptions,
     ) -> Result<Value, OfficeError> {
         let format = format.to_ascii_lowercase();
         let kind = Kind::of_path(input)?;
+        if let Some(pages) = &options.pages {
+            if kind != Kind::Pdf {
+                return Err(OfficeError::usage("`--pages` only applies to PDF text conversions").with_code("unsupported-option"));
+            }
+            if pages.trim().is_empty() {
+                return Err(OfficeError::usage("`--pages` needs at least one page range").with_code("invalid-pages"));
+            }
+        }
         if !kind.exports().contains(&format.as_str()) {
             return Err(OfficeError::usage(format!(
                 "{} cannot be converted to `{format}`; supported targets: {}",
@@ -346,7 +375,7 @@ impl Office {
                 )
                 .map_err(conversion)?
             }
-            Kind::Pdf => extract_pdf_text(input, out)?,
+            Kind::Pdf => extract_pdf_text(input, out, options.pages.as_deref())?,
         };
         Ok(json!({
             "source": input.display().to_string(),
@@ -500,14 +529,92 @@ fn load_deck(path: &Path) -> Result<LoadedDeck, OfficeError> {
 }
 
 /// Writes the extracted Markdown projection of a PDF to a text target.
-fn extract_pdf_text(input: &Path, out: &Path) -> Result<Value, OfficeError> {
-    let report = open_pdf_core::extract_text(input).map_err(conversion)?;
+fn extract_pdf_text(input: &Path, out: &Path, pages: Option<&str>) -> Result<Value, OfficeError> {
+    let (report, selection) = match pages {
+        Some(ranges) => {
+            let (report, selected) = extract_pdf_pages(input, ranges)?;
+            (report, Some((ranges, selected)))
+        }
+        None => (open_pdf_core::extract_text(input).map_err(conversion)?, None),
+    };
     fs::write(out, report.markdown.as_bytes())
         .map_err(|error| OfficeError::runtime(format!("cannot write {}: {error}", out.display())).with_code("output-unwritable"))?;
-    Ok(json!({
+    let mut summary = json!({
         "bytes": report.markdown.len(),
         "losses": report.losses,
-    }))
+    });
+    if let Some((requested, selected)) = selection {
+        summary["pages"] = json!({
+            "requested": requested,
+            "extracted": selected.len(),
+            "numbers": selected,
+        });
+    }
+    Ok(summary)
+}
+
+/// Extracts only the selected pages by arranging the source into a temporary PDF first.
+fn extract_pdf_pages(input: &Path, ranges: &str) -> Result<(open_pdf_core::ExtractReport, Vec<usize>), OfficeError> {
+    let info = open_pdf_core::inspect(input).map_err(conversion)?;
+    let selected = parse_page_ranges(ranges, info.pages)?;
+    if selected.len() == info.pages && selected.iter().copied().eq(1..=info.pages) {
+        return Ok((open_pdf_core::extract_text(input).map_err(conversion)?, selected));
+    }
+    let remove = (1..=info.pages).filter(|page| !selected.contains(page)).collect::<Vec<_>>();
+    let temporary = temporary_pdf_path();
+    let request = open_pdf_core::DocumentArrange { order: Some(selected.clone()), rotate: None, remove: Some(remove) };
+    open_pdf_core::arrange(input, &temporary, &request).map_err(conversion)?;
+    let extracted = open_pdf_core::extract_text(&temporary).map_err(conversion);
+    let _ = fs::remove_file(&temporary);
+    Ok((extracted?, selected))
+}
+
+/// Expands one-based ranges such as `1-3,5`, refusing pages the PDF cannot satisfy.
+fn parse_page_ranges(ranges: &str, page_count: usize) -> Result<Vec<usize>, OfficeError> {
+    let mut selected = Vec::new();
+    for raw in ranges.split(',') {
+        let token = raw.trim();
+        if token.is_empty() {
+            return Err(invalid_pages("page ranges contain an empty entry"));
+        }
+        let (start, end) = match token.split_once('-') {
+            Some((start, end)) => (start.trim(), end.trim()),
+            None => (token, token),
+        };
+        let start = start.parse::<usize>().map_err(|_| invalid_pages(format!("invalid page range `{token}`")))?;
+        let end = end.parse::<usize>().map_err(|_| invalid_pages(format!("invalid page range `{token}`")))?;
+        if start == 0 || end == 0 {
+            return Err(invalid_pages("page numbers start at 1"));
+        }
+        if end < start {
+            return Err(invalid_pages(format!("page range `{token}` is reversed")));
+        }
+        if end > page_count {
+            return Err(invalid_pages(format!("page range `{token}` exceeds the {page_count} available pages")));
+        }
+        for page in start..=end {
+            if selected.contains(&page) {
+                return Err(invalid_pages(format!("page {page} appears twice in `{ranges}`")));
+            }
+            selected.push(page);
+        }
+    }
+    if selected.is_empty() {
+        return Err(invalid_pages("at least one page range is required"));
+    }
+    Ok(selected)
+}
+
+/// A unique path for the intermediate PDF that carries only the selected pages.
+fn temporary_pdf_path() -> PathBuf {
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|elapsed| elapsed.as_nanos()).unwrap_or_default();
+    std::env::temp_dir().join(format!("open-office-pages-{}-{sequence}-{nanos}.pdf", std::process::id()))
+}
+
+fn invalid_pages(message: impl Into<String>) -> OfficeError {
+    OfficeError::usage(message).with_code("invalid-pages")
 }
 
 fn handle_of(opened: &Value) -> Result<u64, OfficeError> {
@@ -695,5 +802,62 @@ mod tests {
         let error = Office::new().probe(&path).expect_err("missing file");
         assert!(!error.is_usage());
         assert!(error.message().contains("does not exist"), "unexpected message: {}", error.message());
+    }
+
+    /// Builds a small multi-page PDF so page-range behaviour can be exercised.
+    fn two_page_pdf(dir: &Path) -> PathBuf {
+        let source = dir.join("source.pdf");
+        let request = open_pdf_core::CreateRequest {
+            out: source.clone(),
+            pages: vec!["Alpha page".to_string(), "Beta page".to_string()],
+            overwrite: true,
+            ..Default::default()
+        };
+        open_pdf_core::create(&request).expect("create pdf");
+        source
+    }
+
+    #[test]
+    fn pdf_conversion_extracts_only_the_requested_pages() {
+        let dir = std::env::temp_dir().join(format!("open-office-pages-range-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("temp dir");
+        let source = two_page_pdf(&dir);
+        let target = dir.join("page-two.md");
+        let options = ConvertOptions { pages: Some("2".to_string()) };
+        let report = Office::new().convert_with(&source, "md", &target, false, &options).expect("page conversion");
+        assert_eq!(report["report"]["pages"]["requested"], json!("2"));
+        assert_eq!(report["report"]["pages"]["extracted"], json!(1));
+        assert_eq!(report["report"]["pages"]["numbers"], json!([2]));
+        let markdown = fs::read_to_string(&target).expect("read markdown");
+        assert!(markdown.contains("Beta page"), "unexpected markdown: {markdown}");
+        assert!(!markdown.contains("Alpha page"), "page 1 must be excluded: {markdown}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pdf_page_ranges_refuse_invalid_requests() {
+        let dir = std::env::temp_dir().join(format!("open-office-pages-invalid-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("temp dir");
+        let source = two_page_pdf(&dir);
+        let office = Office::new();
+        let target = dir.join("out.md");
+        let range = |pages: &str| ConvertOptions { pages: Some(pages.to_string()) };
+
+        let error = office.convert_with(&source, "md", &target, false, &range("3")).expect_err("out of range");
+        assert_eq!(error.code(), "invalid-pages");
+        assert!(error.is_usage());
+
+        let error = office.convert_with(&source, "md", &target, false, &range("1,1")).expect_err("duplicate page");
+        assert_eq!(error.code(), "invalid-pages");
+
+        let error = office.convert_with(&source, "md", &target, false, &range(" ")).expect_err("empty range");
+        assert_eq!(error.code(), "invalid-pages");
+
+        let markdown = dir.join("notes.md");
+        fs::write(&markdown, b"# Title\n").expect("write markdown");
+        let error = office.convert_with(&markdown, "pdf", &dir.join("notes.pdf"), false, &range("1")).expect_err("not a PDF");
+        assert_eq!(error.code(), "unsupported-option");
+        assert!(error.is_usage());
+        let _ = fs::remove_dir_all(&dir);
     }
 }

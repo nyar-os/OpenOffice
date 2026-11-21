@@ -8,7 +8,7 @@ use std::{
     process::ExitCode,
 };
 
-use open_office::{Office, OfficeError, VERSION};
+use open_office::{ConvertOptions, Office, OfficeError, VERSION};
 use serde_json::Value;
 
 fn main() -> ExitCode {
@@ -69,6 +69,7 @@ fn convert(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
     let mut format = None;
     let mut out = None;
     let mut out_dir = None;
+    let mut pages = None;
     let mut overwrite = false;
     let mut index = 0;
     while index < arguments.len() {
@@ -81,6 +82,9 @@ fn convert(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
             }
             "--out-dir" => {
                 out_dir = Some(value_of(arguments, &mut index, "--out-dir")?);
+            }
+            "--pages" => {
+                pages = Some(value_of(arguments, &mut index, "--pages")?);
             }
             "--overwrite" => overwrite = true,
             value if value.starts_with('-') => {
@@ -101,7 +105,11 @@ fn convert(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
             ));
         }
         let out = out.ok_or_else(|| OfficeError::usage("`--out <file>` is required"))?;
-        return print_json(&office.convert(Path::new(&inputs[0]), &format, Path::new(&out), overwrite)?);
+        let options = ConvertOptions { pages };
+        return print_json(&office.convert_with(Path::new(&inputs[0]), &format, Path::new(&out), overwrite, &options)?);
+    }
+    if pages.is_some() {
+        return Err(OfficeError::usage("`--pages` cannot be combined with multiple inputs"));
     }
     if out.is_some() {
         return Err(OfficeError::usage("`--out` cannot be used with multiple inputs; pass `--out-dir <dir>`"));
@@ -147,7 +155,7 @@ fn usage() {
          \x20 open-office inspect <file>\n\
          \x20 open-office stats <file>\n\
          \x20 open-office formats\n\
-         \x20 open-office convert <file> --format <format> --out <file> [--overwrite]\n\
+         \x20 open-office convert <file> --format <format> --out <file> [--overwrite] [--pages <ranges>]\n\
          \x20 open-office convert <file>... --format <format> --out-dir <dir> [--overwrite]\n\
          \x20 open-office capabilities\n\
          \x20 open-office version\n\
@@ -160,6 +168,7 @@ fn usage() {
          \x20 open-office convert budget.xlsx --format pdf --out budget.pdf\n\
          \x20 open-office convert deck.pptx --format pdf --out deck.pdf\n\
          \x20 open-office convert notes.pdf --format md --out notes.md\n\
+         \x20 open-office convert paper.pdf --format md --out paper.md --pages 1-3,5\n\
          \x20 open-office convert a.docx b.xlsx --format pdf --out-dir out"
     );
 }
