@@ -19,5 +19,5 @@ open-word-document = { path = "../../../../OpenWord/projects/crates/model" }
 open-excel-workbook = { path = "../../../../OpenExcel/projects/crates/model" }
 open-ppt-deck = { path = "../../../../OpenPPT/projects/crates/deck" }
 open-pdf-core = { path = "../../../../OpenPDF/projects/crates/pdf" }
-document-formats = { git = "https://github.com/oovm/rust-boost", rev = "365f1c9df8f983fa5f5815ec29c770f2241f6d26", default-features = false, features = ["package-detect"] }
+document-formats = { git = "https://github.com/oovm/rust-boost", rev = "61a52cc73396957f63df39aeaf6d42d7904e907b", default-features = false, features = ["package-detect"] }
 serde_json = "1"
