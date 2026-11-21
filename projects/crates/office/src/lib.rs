@@ -62,7 +62,7 @@ impl Kind {
     pub fn of_path(path: &Path) -> Result<Self, OfficeError> {
         let extension = path.extension().and_then(|value| value.to_str()).unwrap_or_default().to_ascii_lowercase();
         if extension.is_empty() {
-            return Err(OfficeError::runtime(format!("{} has no file extension", path.display())));
+            return Err(OfficeError::runtime(format!("{} has no file extension", path.display())).with_code("missing-extension"));
         }
         [Self::Word, Self::Excel, Self::Presentation, Self::Pdf]
             .into_iter()
@@ -71,6 +71,7 @@ impl Kind {
                 OfficeError::runtime(format!(
                     "`{extension}` is not a word, workbook, presentation or PDF format in this build"
                 ))
+                .with_code("unsupported-extension")
             })
     }
 }
@@ -80,22 +81,38 @@ impl Kind {
 pub struct OfficeError {
     message: String,
     usage: bool,
+    code: &'static str,
 }
 
 impl OfficeError {
     /// A caller mistake: unknown option, missing argument or unsupported target.
     pub fn usage(message: impl Into<String>) -> Self {
-        Self { message: message.into(), usage: true }
+        Self { message: message.into(), usage: true, code: "usage" }
     }
 
     /// A failure while reading, converting or writing a document.
     pub fn runtime(message: impl Into<String>) -> Self {
-        Self { message: message.into(), usage: false }
+        Self { message: message.into(), usage: false, code: "runtime" }
+    }
+
+    /// Refines the failure with a stable machine-readable code.
+    pub fn with_code(mut self, code: &'static str) -> Self {
+        self.code = code;
+        self
     }
 
     /// Human-readable detail, without the `open-office:` prefix.
     pub fn message(&self) -> &str {
         &self.message
+    }
+
+    /// Stable machine-readable code, safe for callers to branch on.
+    ///
+    /// Unrefined failures report `usage` or `runtime`; the concrete cause is
+    /// named by sites such as `not-found`, `unsupported-target` or
+    /// `conversion-failed`.
+    pub fn code(&self) -> &'static str {
+        self.code
     }
 
     /// Whether the failure is a usage error (exit code 2) or a runtime error (1).
@@ -161,10 +178,10 @@ impl Office {
     pub fn probe(&self, path: &Path) -> Result<Value, OfficeError> {
         let bytes = fs::read(path).map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
-                OfficeError::runtime(format!("{} does not exist", path.display()))
+                OfficeError::runtime(format!("{} does not exist", path.display())).with_code("not-found")
             }
             else {
-                OfficeError::runtime(format!("cannot read {}: {error}", path.display()))
+                OfficeError::runtime(format!("cannot read {}: {error}", path.display())).with_code("unreadable")
             }
         })?;
         let extension = path.extension().and_then(|value| value.to_str()).map(str::to_ascii_lowercase);
@@ -294,38 +311,40 @@ impl Office {
                 "{} cannot be converted to `{format}`; supported targets: {}",
                 kind.label(),
                 kind.exports().join(", ")
-            )));
+            ))
+            .with_code("unsupported-target"));
         }
         verify_container(input, kind)?;
         if out.exists() && !overwrite {
             return Err(OfficeError::runtime(format!(
                 "{} already exists; pass --overwrite to replace it",
                 out.display()
-            )));
+            ))
+            .with_code("target-exists"));
         }
 
         let report = match kind {
             Kind::Word => {
-                let opened = open_word_document::open(input).map_err(runtime)?;
+                let opened = open_word_document::open(input).map_err(conversion)?;
                 let handle = handle_of(&opened)?;
-                let report = open_word_document::export(handle, &format, out, overwrite).map_err(runtime)?;
+                let report = open_word_document::export(handle, &format, out, overwrite).map_err(conversion)?;
                 let _ = open_word_document::close(handle);
                 report
             }
             Kind::Excel => {
-                let opened = open_excel_workbook::open(input).map_err(runtime)?;
+                let opened = open_excel_workbook::open(input).map_err(conversion)?;
                 let handle = handle_of(&opened)?;
-                let report = open_excel_workbook::export(handle, &format, out, overwrite).map_err(runtime)?;
+                let report = open_excel_workbook::export(handle, &format, out, overwrite).map_err(conversion)?;
                 let _ = open_excel_workbook::close(handle);
                 report
             }
             Kind::Presentation => {
-                let loaded = load_deck(input)?;
+                let loaded = load_deck(input).map_err(|error| error.with_code("conversion-failed"))?;
                 open_ppt_deck::export(
                     &loaded.deck,
                     &json!({ "format": format, "target": out.display().to_string(), "overwrite": overwrite }),
                 )
-                .map_err(runtime)?
+                .map_err(conversion)?
             }
             Kind::Pdf => extract_pdf_text(input, out)?,
         };
@@ -359,9 +378,10 @@ impl Office {
         if out_dir.as_os_str().is_empty() {
             return Err(OfficeError::usage("`--out-dir <dir>` is required"));
         }
-        fs::create_dir_all(out_dir).map_err(|error| {
-            OfficeError::runtime(format!("cannot create {}: {error}", out_dir.display()))
-        })?;
+        fs::create_dir_all(out_dir)
+            .map_err(|error| {
+                OfficeError::runtime(format!("cannot create {}: {error}", out_dir.display())).with_code("output-unwritable")
+            })?;
 
         let mut converted = 0;
         let mut failed = 0;
@@ -385,6 +405,7 @@ impl Office {
                         "source": input.display().to_string(),
                         "target": target.display().to_string(),
                         "ok": false,
+                        "code": error.code(),
                         "error": error.message(),
                     }));
                 }
@@ -402,9 +423,10 @@ impl Office {
 /// that contradicts the route is refused with the probe's own evidence.
 fn verify_container(path: &Path, kind: Kind) -> Result<(), OfficeError> {
     if !path.exists() {
-        return Err(OfficeError::runtime(format!("{} does not exist", path.display())));
+        return Err(OfficeError::runtime(format!("{} does not exist", path.display())).with_code("not-found"));
     }
-    let bytes = fs::read(path).map_err(|error| OfficeError::runtime(format!("cannot read {}: {error}", path.display())))?;
+    let bytes = fs::read(path)
+        .map_err(|error| OfficeError::runtime(format!("cannot read {}: {error}", path.display())).with_code("unreadable"))?;
     let extension = path.extension().and_then(|value| value.to_str()).unwrap_or_default();
     let detection = detect_bytes(&bytes, Some(extension));
     let mismatch = match (kind, detection.container) {
@@ -424,7 +446,8 @@ fn verify_container(path: &Path, kind: Kind) -> Result<(), OfficeError> {
         path.display(),
         kind.label(),
         detection.evidence
-    )))
+    ))
+    .with_code("container-mismatch"))
 }
 
 /// Stable container name used in probe reports.
@@ -478,9 +501,9 @@ fn load_deck(path: &Path) -> Result<LoadedDeck, OfficeError> {
 
 /// Writes the extracted Markdown projection of a PDF to a text target.
 fn extract_pdf_text(input: &Path, out: &Path) -> Result<Value, OfficeError> {
-    let report = open_pdf_core::extract_text(input).map_err(runtime)?;
+    let report = open_pdf_core::extract_text(input).map_err(conversion)?;
     fs::write(out, report.markdown.as_bytes())
-        .map_err(|error| OfficeError::runtime(format!("cannot write {}: {error}", out.display())))?;
+        .map_err(|error| OfficeError::runtime(format!("cannot write {}: {error}", out.display())).with_code("output-unwritable"))?;
     Ok(json!({
         "bytes": report.markdown.len(),
         "losses": report.losses,
@@ -496,6 +519,11 @@ fn handle_of(opened: &Value) -> Result<u64, OfficeError> {
 
 fn runtime(error: impl fmt::Display) -> OfficeError {
     OfficeError::runtime(error.to_string())
+}
+
+/// A failure raised by an engine while converting, with its stable batch code.
+fn conversion(error: impl fmt::Display) -> OfficeError {
+    OfficeError::runtime(error.to_string()).with_code("conversion-failed")
 }
 
 #[cfg(test)]
@@ -530,9 +558,40 @@ mod tests {
         assert_eq!(results[0]["source"], json!("missing-a.docx"));
         assert_eq!(results[0]["target"], json!(out_dir.join("missing-a.pdf").display().to_string()));
         assert_eq!(results[0]["ok"], json!(false));
-        assert!(results[0]["error"].is_string());
+        assert_eq!(results[0]["code"], json!("not-found"));
+        assert!(results[0]["error"].as_str().expect("error message").contains("does not exist"));
         assert_eq!(results[1]["ok"], json!(false));
         let _ = fs::remove_dir_all(&out_dir);
+    }
+
+    /// Batch failures carry a stable code next to the unchanged human message.
+    #[test]
+    fn convert_many_reports_stable_error_codes() {
+        let office = Office::new();
+        let dir = std::env::temp_dir().join(format!("open-office-error-codes-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("temp dir");
+        fs::write(dir.join("notes.bin"), b"just words").expect("write unknown");
+        let inputs = vec![PathBuf::from("missing-c.docx"), dir.join("notes.bin")];
+        let report = office.convert_many(&inputs, "pdf", &dir.join("out"), false).expect("batch result");
+        assert_eq!(report["converted"], json!(0));
+        assert_eq!(report["failed"], json!(2));
+        let results = report["results"].as_array().expect("results array");
+        assert_eq!(results[0]["code"], json!("not-found"));
+        assert_eq!(results[1]["code"], json!("unsupported-extension"));
+        assert!(results[1]["error"].is_string());
+
+        let source = dir.join("notes.md");
+        fs::write(&source, b"# Title\n").expect("write markdown");
+        let target = dir.join("notes.pdf");
+        fs::write(&target, b"%PDF-1.7\n").expect("write target");
+        let error = office.convert(&source, "pdf", &target, false).expect_err("target exists");
+        assert_eq!(error.code(), "target-exists");
+        assert!(!error.is_usage());
+
+        let error = office.convert(&source, "xlsx", &dir.join("notes.xlsx"), false).expect_err("unsupported target");
+        assert_eq!(error.code(), "unsupported-target");
+        assert!(error.is_usage());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     /// A `.pdf` route must not accept plain text that has no PDF header.
