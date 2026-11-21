@@ -55,6 +55,12 @@ open-office inspect path/to/budget.xlsx
 open-office inspect path/to/deck.pptx
 open-office inspect path/to/paper.pdf
 
+# Project one document into its navigable outline
+open-office outline path/to/report.docx
+open-office outline path/to/budget.xlsx
+open-office outline path/to/deck.pptx --points
+open-office outline path/to/paper.pdf
+
 # Convert with an explicit target format
 open-office convert notes.md --format pdf --out notes.pdf
 open-office convert budget.xlsx --format csv --out budget.csv
@@ -67,6 +73,11 @@ rule checks; workbook summary and checks; deck summary and import losses; PDF
 version, page geometry, metadata, bookmarks and form fields. `convert` refuses
 targets the source engine cannot write and never overwrites without
 `--overwrite`.
+
+`outline` returns the structure each family actually owns: nested headings for
+word documents, sheets for workbooks, slide titles (plus talking points with
+`--points`) for presentations, and outline bookmarks for PDFs. `--points` is
+refused for any other family instead of being silently ignored.
 
 Supported conversion targets:
 

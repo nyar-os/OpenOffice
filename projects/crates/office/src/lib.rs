@@ -154,7 +154,7 @@ impl Office {
     pub fn capabilities(&self) -> Value {
         json!({
             "engine": { "package": "open-office", "version": VERSION },
-            "commands": ["probe", "inspect", "convert", "formats", "stats", "capabilities", "version"],
+            "commands": ["probe", "inspect", "convert", "formats", "stats", "outline", "capabilities", "version"],
             "modules": {
                 "word": open_word_document::capabilities(),
                 "excel": open_excel_workbook::capabilities(),
@@ -249,6 +249,58 @@ impl Office {
             "kind": kind.label(),
             "path": path.display().to_string(),
             "stats": stats,
+        }))
+    }
+
+    /// Projects one document into its navigable outline.
+    ///
+    /// Each family answers with the structure it really owns: a word document
+    /// nests its sections by heading level, a workbook lists its sheets, a
+    /// presentation lists its slides (and, with `points`, their talking points),
+    /// and a PDF reports its outline bookmarks. `points` is refused for families
+    /// that have no talking points instead of being silently ignored.
+    pub fn outline(&self, path: &Path, points: bool) -> Result<Value, OfficeError> {
+        let kind = Kind::of_path(path)?;
+        if points && kind != Kind::Presentation {
+            return Err(OfficeError::usage("`--points` only applies to presentations").with_code("unsupported-option"));
+        }
+        verify_container(path, kind)?;
+        let outline = match kind {
+            Kind::Word => {
+                let opened = open_word_document::open(path).map_err(runtime)?;
+                let handle = handle_of(&opened)?;
+                let outcome = open_word_document::outline(handle);
+                let _ = open_word_document::close(handle);
+                outcome.map_err(runtime)?
+            }
+            Kind::Excel => {
+                let opened = open_excel_workbook::open(path).map_err(runtime)?;
+                let handle = handle_of(&opened)?;
+                let summary = open_excel_workbook::summary(handle);
+                let _ = open_excel_workbook::close(handle);
+                let summary = summary.map_err(runtime)?;
+                json!({
+                    "revision": summary.get("revision").cloned().unwrap_or(Value::Null),
+                    "sheets": summary.get("sheets").cloned().unwrap_or_else(|| json!([])),
+                })
+            }
+            Kind::Presentation => {
+                let loaded = load_deck(path)?;
+                open_ppt_deck::outline::outline(&loaded.deck, &json!({ "points": points })).map_err(runtime)?
+            }
+            Kind::Pdf => {
+                let report = open_pdf_core::inspect(path).map_err(runtime)?;
+                json!({
+                    "pages": report.pages,
+                    "bookmarks": serde_json::to_value(&report.bookmarks)
+                        .map_err(|error| OfficeError::runtime(error.to_string()))?,
+                })
+            }
+        };
+        Ok(json!({
+            "kind": kind.label(),
+            "path": path.display().to_string(),
+            "outline": outline,
         }))
     }
 
@@ -858,6 +910,101 @@ mod tests {
         let error = office.convert_with(&markdown, "pdf", &dir.join("notes.pdf"), false, &range("1")).expect_err("not a PDF");
         assert_eq!(error.code(), "unsupported-option");
         assert!(error.is_usage());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn outline_nests_word_headings() {
+        let dir = std::env::temp_dir().join(format!("open-office-outline-word-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("temp dir");
+        let created = open_word_document::create(&json!({ "title": "Outline" })).expect("create");
+        let handle = handle_of(&created).expect("handle");
+        open_word_document::edit(
+            handle,
+            &json!({
+                "operations": [
+                    { "type": "heading.append", "level": 1, "text": "Overview" },
+                    { "type": "heading.append", "level": 2, "text": "Details" },
+                ],
+            }),
+        )
+        .expect("seed headings");
+        let path = dir.join("outline.oword");
+        open_word_document::save(handle, &path, true).expect("save");
+        let _ = open_word_document::close(handle);
+
+        let report = Office::new().outline(&path, false).expect("outline");
+        assert_eq!(report["kind"], json!("word"));
+        assert_eq!(report["outline"]["items"][0]["title"], json!("Overview"));
+        assert_eq!(report["outline"]["items"][0]["children"][0]["title"], json!("Details"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn outline_lists_workbook_sheets_and_refuses_points() {
+        let dir = std::env::temp_dir().join(format!("open-office-outline-excel-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("temp dir");
+        let created = open_excel_workbook::create(&json!({ "title": "Outline" })).expect("create");
+        let handle = handle_of(&created).expect("handle");
+        let path = dir.join("outline.oexcel");
+        open_excel_workbook::save(handle, &path, true).expect("save");
+        let _ = open_excel_workbook::close(handle);
+
+        let office = Office::new();
+        let report = office.outline(&path, false).expect("outline");
+        assert_eq!(report["kind"], json!("excel"));
+        assert_eq!(report["outline"]["sheets"][0]["name"], json!("Sheet1"));
+
+        let error = office.outline(&path, true).expect_err("points are presentations only");
+        assert_eq!(error.code(), "unsupported-option");
+        assert!(error.is_usage());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn outline_reads_pdf_bookmarks() {
+        let dir = std::env::temp_dir().join(format!("open-office-outline-pdf-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("temp dir");
+        let source = two_page_pdf(&dir);
+        let marked = dir.join("marked.pdf");
+        open_pdf_core::set_bookmarks(
+            &source,
+            &marked,
+            &[
+                open_pdf_core::Bookmark { title: "Top".to_owned(), page: 1, depth: Some(0) },
+                open_pdf_core::Bookmark { title: "Child".to_owned(), page: 2, depth: Some(1) },
+            ],
+        )
+        .expect("bookmarks");
+
+        let report = Office::new().outline(&marked, false).expect("outline");
+        assert_eq!(report["kind"], json!("pdf"));
+        assert_eq!(report["outline"]["pages"], json!(2));
+        assert_eq!(report["outline"]["bookmarks"][0]["title"], json!("Top"));
+        assert_eq!(report["outline"]["bookmarks"][0]["depth"], json!(1));
+        assert_eq!(report["outline"]["bookmarks"][1]["depth"], json!(2));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn outline_lists_presentation_slides_with_points() {
+        let dir = std::env::temp_dir().join(format!("open-office-outline-deck-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("temp dir");
+        let deck = open_ppt_deck::create(open_ppt_deck::CreateRequest {
+            title: Some("Outline".to_owned()),
+            size: None,
+            theme: None,
+            slides: vec!["Intro".to_owned(), "Plan".to_owned()],
+        })
+        .expect("create");
+        let path = dir.join("outline.project");
+        open_ppt_deck::save(&deck, &path, true).expect("save");
+
+        let report = Office::new().outline(&path, true).expect("outline");
+        assert_eq!(report["kind"], json!("presentation"));
+        assert_eq!(report["outline"]["slides"][0]["title"], json!("Intro"));
+        assert_eq!(report["outline"]["slides"][1]["title"], json!("Plan"));
+        assert_eq!(report["outline"]["slides"][0]["points"], json!([]));
         let _ = fs::remove_dir_all(&dir);
     }
 }
