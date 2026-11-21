@@ -42,6 +42,10 @@ fn run(arguments: &[String]) -> Result<(), OfficeError> {
         }
         "capabilities" => print_json(&office.capabilities()),
         "formats" => print_json(&office.formats()),
+        "probe" | "inspect-file" | "inspect_file" => {
+            let path = positional(rest, "a file path is required")?;
+            print_json(&office.probe(Path::new(&path))?)
+        }
         "inspect" => {
             let path = positional(rest, "a document path is required")?;
             print_json(&office.inspect(Path::new(&path))?)
@@ -139,6 +143,7 @@ fn usage() {
          pptx and PDF files.\n\
          \n\
          USAGE:\n\
+         \x20 open-office probe <file>\n\
          \x20 open-office inspect <file>\n\
          \x20 open-office stats <file>\n\
          \x20 open-office formats\n\
@@ -148,6 +153,7 @@ fn usage() {
          \x20 open-office version\n\
          \n\
          EXAMPLES:\n\
+         \x20 open-office probe download.bin\n\
          \x20 open-office inspect report.docx\n\
          \x20 open-office stats report.docx\n\
          \x20 open-office formats\n\

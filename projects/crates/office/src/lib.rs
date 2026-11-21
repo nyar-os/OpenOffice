@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use document_formats::detect::{ContainerKind, detect_bytes};
+use document_formats::detect::{ContainerKind, DetectionConfidence, detect_bytes};
 use serde_json::{Value, json};
 
 /// Crate version reported by `capabilities` and `version`.
@@ -126,7 +126,7 @@ impl Office {
     pub fn capabilities(&self) -> Value {
         json!({
             "engine": { "package": "open-office", "version": VERSION },
-            "commands": ["inspect", "convert", "formats", "stats", "capabilities", "version"],
+            "commands": ["probe", "inspect", "convert", "formats", "stats", "capabilities", "version"],
             "modules": {
                 "word": open_word_document::capabilities(),
                 "excel": open_excel_workbook::capabilities(),
@@ -150,6 +150,35 @@ impl Office {
             "presentation": { "import": Kind::Presentation.imports(), "export": Kind::Presentation.exports() },
             "pdf": { "import": Kind::Pdf.imports(), "export": Kind::Pdf.exports() },
         })
+    }
+
+    /// Probes what a file's bytes prove about its format, using the extension as a hint only.
+    ///
+    /// Unlike [`Office::inspect`] this needs no routed extension and never opens
+    /// the document. The report names the container and confidence, keeps every
+    /// candidate still possible and quotes the evidence, so an ambiguous ZIP
+    /// package is described rather than guessed.
+    pub fn probe(&self, path: &Path) -> Result<Value, OfficeError> {
+        let bytes = fs::read(path).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                OfficeError::runtime(format!("{} does not exist", path.display()))
+            }
+            else {
+                OfficeError::runtime(format!("cannot read {}: {error}", path.display()))
+            }
+        })?;
+        let extension = path.extension().and_then(|value| value.to_str()).map(str::to_ascii_lowercase);
+        let detection = detect_bytes(&bytes, extension.as_deref());
+        Ok(json!({
+            "path": path.display().to_string(),
+            "bytes": bytes.len(),
+            "extension": extension,
+            "format": detection.format,
+            "container": container_label(detection.container),
+            "confidence": confidence_label(detection.confidence),
+            "candidates": detection.candidates,
+            "evidence": detection.evidence,
+        }))
     }
 
     /// Reports lightweight per-family statistics for one document.
@@ -398,6 +427,26 @@ fn verify_container(path: &Path, kind: Kind) -> Result<(), OfficeError> {
     )))
 }
 
+/// Stable container name used in probe reports.
+fn container_label(container: ContainerKind) -> &'static str {
+    match container {
+        ContainerKind::Plain => "plain",
+        ContainerKind::Zip => "zip",
+        ContainerKind::OleCompound => "ole-compound",
+        ContainerKind::Pdf => "pdf",
+    }
+}
+
+/// Stable confidence name used in probe reports.
+fn confidence_label(confidence: DetectionConfidence) -> &'static str {
+    match confidence {
+        DetectionConfidence::Verified => "verified",
+        DetectionConfidence::Hinted => "hinted",
+        DetectionConfidence::Ambiguous => "ambiguous",
+        DetectionConfidence::Unknown => "unknown",
+    }
+}
+
 /// Family a detected format id names, when it names one of the routed families.
 fn family_of(format: &str) -> Option<Kind> {
     match format {
@@ -520,5 +569,72 @@ mod tests {
         fs::write(&path, b"%PDF-1.7\n").expect("write probe");
         verify_container(&path, Kind::Pdf).expect("a PDF header matches the PDF route");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A probe reports the verified container facts and the quoted evidence.
+    #[test]
+    fn probe_reports_pdf_bytes_as_verified() {
+        let dir = std::env::temp_dir().join(format!("open-office-format-probe-pdf-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("notes.pdf");
+        fs::write(&path, b"%PDF-1.7\n").expect("write probe");
+        let report = Office::new().probe(&path).expect("probe");
+        assert_eq!(report["path"], json!(path.display().to_string()));
+        assert_eq!(report["bytes"], json!(9));
+        assert_eq!(report["extension"], json!("pdf"));
+        assert_eq!(report["format"], json!("pdf"));
+        assert_eq!(report["container"], json!("pdf"));
+        assert_eq!(report["confidence"], json!("verified"));
+        assert_eq!(report["candidates"], json!(["pdf"]));
+        assert!(report["evidence"].as_str().expect("evidence").contains("%PDF-"), "unexpected evidence: {}", report["evidence"]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The extension is a hint for plain text, not proof of the format.
+    #[test]
+    fn probe_uses_the_extension_as_a_hint_only() {
+        let dir = std::env::temp_dir().join(format!("open-office-format-probe-hint-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("temp dir");
+        let hinted = dir.join("notes.md");
+        fs::write(&hinted, b"# Title\n\nBody.\n").expect("write hinted");
+        let report = Office::new().probe(&hinted).expect("probe hinted");
+        assert_eq!(report["format"], json!("markdown"));
+        assert_eq!(report["container"], json!("plain"));
+        assert_eq!(report["confidence"], json!("hinted"));
+        assert_eq!(report["candidates"], json!(["markdown"]));
+
+        let unproven = dir.join("notes.docx");
+        fs::write(&unproven, b"just words").expect("write unproven");
+        let report = Office::new().probe(&unproven).expect("probe unproven");
+        assert_eq!(report["format"], Value::Null);
+        assert_eq!(report["confidence"], json!("unknown"));
+        assert_eq!(report["candidates"], json!([]));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A ZIP container without readable parts keeps every package candidate.
+    #[test]
+    fn probe_keeps_zip_package_candidates_ambiguous() {
+        let dir = std::env::temp_dir().join(format!("open-office-format-probe-zip-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("payload.bin");
+        fs::write(&path, b"PK\x03\x04not-a-package").expect("write probe");
+        let report = Office::new().probe(&path).expect("probe");
+        assert_eq!(report["format"], Value::Null);
+        assert_eq!(report["container"], json!("zip"));
+        assert_eq!(report["confidence"], json!("ambiguous"));
+        assert_eq!(report["candidates"], json!(["docx", "xlsx", "pptx", "epub"]));
+        assert!(report["evidence"].as_str().expect("evidence").contains("ZIP container"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Probing a path that is not there is a runtime failure, not a usage error.
+    #[test]
+    fn probe_rejects_a_missing_file() {
+        let path = std::env::temp_dir().join("open-office-format-probe-missing.bin");
+        let _ = fs::remove_file(&path);
+        let error = Office::new().probe(&path).expect_err("missing file");
+        assert!(!error.is_usage());
+        assert!(error.message().contains("does not exist"), "unexpected message: {}", error.message());
     }
 }
