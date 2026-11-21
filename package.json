@@ -1,4 +1,7 @@
 {
+    "name": "@wae/open-office",
+    "description": "Thin all-in-one host bundling OpenWord, OpenExcel, OpenPPT, and OpenPDF into a single binary covering all Office formats",
+    "keywords": ["office", "docx", "xlsx", "pptx", "pdf"],
     "private": true,
     "scripts": {
         "doc": "cargo doc --no-deps --all-features",

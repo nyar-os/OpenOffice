@@ -1,8 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["projects/*"]
+members = ["projects/sub_projects", "projects/crates/*"]
 default-members = [
     "projects/sub_projects",
+    "projects/crates/office",
 ]
 exclude = [
     "projects/.DS_Store",
