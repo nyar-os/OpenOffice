@@ -661,6 +661,74 @@ impl Office {
         }))
     }
 
+    /// Renders many documents into one subdirectory per source file.
+    ///
+    /// Every input keeps its own `page-<n>.svg` files under
+    /// `<out_dir>/<source stem>/`. A failing document does not stop the batch:
+    /// each entry carries `ok` and either `written`/`totalPages` or the stable
+    /// `code` and `error` message.
+    pub fn render_many(&self, inputs: &[PathBuf], options: &RenderOptions) -> Result<Value, OfficeError> {
+        if inputs.is_empty() {
+            return Err(OfficeError::usage("at least one document is required"));
+        }
+        if options.out.is_some() {
+            return Err(OfficeError::usage(
+                "`--out` writes one page and cannot be combined with several documents; pass `--out-dir <dir>`",
+            )
+            .with_code("unsupported-option"));
+        }
+        let out_dir = options
+            .out_dir
+            .as_ref()
+            .ok_or_else(|| OfficeError::usage("`--out-dir <dir>` is required for several documents"))?;
+        fs::create_dir_all(out_dir).map_err(|error| {
+            OfficeError::runtime(format!("cannot create {}: {error}", out_dir.display())).with_code("unwritable")
+        })?;
+
+        let mut rendered = 0;
+        let mut failed = 0;
+        let mut results = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            let stem = input.file_stem().map(|value| value.to_string_lossy().into_owned()).unwrap_or_default();
+            let target = out_dir.join(&stem);
+            let per_file = RenderOptions {
+                sheet: options.sheet.clone(),
+                page: options.page,
+                out: None,
+                out_dir: Some(target.clone()),
+                overwrite: options.overwrite,
+            };
+            match self.render(input, &per_file) {
+                Ok(report) => {
+                    rendered += 1;
+                    results.push(json!({
+                        "source": input.display().to_string(),
+                        "outDir": target.display().to_string(),
+                        "ok": true,
+                        "totalPages": report.get("totalPages").cloned().unwrap_or(Value::Null),
+                        "written": report.get("written").cloned().unwrap_or_else(|| json!([])),
+                    }));
+                }
+                Err(error) => {
+                    failed += 1;
+                    results.push(json!({
+                        "source": input.display().to_string(),
+                        "outDir": target.display().to_string(),
+                        "ok": false,
+                        "code": error.code(),
+                        "error": error.message(),
+                    }));
+                }
+            }
+        }
+        Ok(json!({
+            "outDir": out_dir.display().to_string(),
+            "rendered": rendered,
+            "failed": failed,
+            "results": results,
+        }))
+    }
+
     /// Inspects a document by dispatching to the owning engine.
     pub fn inspect(&self, path: &Path) -> Result<Value, OfficeError> {
         let kind = Kind::of_path(path)?;

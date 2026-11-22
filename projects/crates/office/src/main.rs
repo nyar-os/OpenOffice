@@ -213,7 +213,7 @@ fn search(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
 
 /// Parses `render` options and hands one request to the library.
 fn render(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
-    let mut path = None;
+    let mut paths: Vec<String> = Vec::new();
     let mut sheet = None;
     let mut page = None;
     let mut out = None;
@@ -233,14 +233,25 @@ fn render(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
             value if value.starts_with('-') => {
                 return Err(OfficeError::usage(format!("unknown option `{value}`")));
             }
-            value if path.is_none() => path = Some(value.to_string()),
-            _ => return Err(OfficeError::usage("render takes exactly one document path")),
+            value => paths.push(value.to_string()),
         }
         index += 1;
     }
-    let path = path.ok_or_else(|| OfficeError::usage("a document path is required"))?;
+    if paths.is_empty() {
+        return Err(OfficeError::usage("a document path is required"));
+    }
     let options = RenderOptions { sheet, page, out, out_dir, overwrite };
-    print_json(&office.render(Path::new(&path), &options)?)
+    if paths.len() == 1 {
+        return print_json(&office.render(Path::new(&paths[0]), &options)?);
+    }
+    let inputs = paths.iter().map(PathBuf::from).collect::<Vec<_>>();
+    let report = office.render_many(&inputs, &options)?;
+    print_json(&report)?;
+    let failed = report.get("failed").and_then(Value::as_u64).unwrap_or_default();
+    if failed > 0 {
+        return Err(OfficeError::runtime(format!("{failed} of {} documents failed", inputs.len())));
+    }
+    Ok(())
 }
 
 /// Parses `open` options and opens one file with the platform viewer.
@@ -354,6 +365,7 @@ fn usage() {
          \x20 open-office outline <file>... [--points] [--depth <n>]\n\
          \x20 open-office search <file>... --text <query> [--limit <n>]\n\
          \x20 open-office render <file> [--sheet <name>] [--page <n>] [--out <file> | --out-dir <dir>] [--overwrite]\n\
+         \x20 open-office render <file>... --out-dir <dir> [--sheet <name> | --page <n>] [--overwrite]\n\
          \x20 open-office formats\n\
          \x20 open-office convert <file> --format <format> --out <file> [--overwrite] [--pages <ranges>]\n\
          \x20 open-office convert <file>... --format <format> --out-dir <dir> [--overwrite]\n\
@@ -378,6 +390,7 @@ fn usage() {
          \x20 open-office render budget.xlsx --out sheet.svg\n\
          \x20 open-office render deck.pptx --page 2 --out slide-2.svg\n\
          \x20 open-office render deck.pptx --out-dir preview/\n\
+         \x20 open-office render budget.xlsx deck.pptx --out-dir preview/\n\
          \x20 open-office formats\n\
          \x20 open-office convert budget.xlsx --format pdf --out budget.pdf\n\
          \x20 open-office convert deck.pptx --format pdf --out deck.pdf\n\

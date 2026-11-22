@@ -691,9 +691,65 @@ fn render_lists_presentation_pages_and_selects_one() {
         .expect_err("mutually exclusive");
     assert_eq!(error.code(), "unsupported-option");
 
-    let error = office.render(&path, &RenderOptions { sheet: Some("Sheet1".to_owned()), ..RenderOptions::default() })
+    let error = office
+        .render(&path, &RenderOptions { sheet: Some("Sheet1".to_owned()), ..RenderOptions::default() })
         .expect_err("sheet is for workbooks");
     assert_eq!(error.code(), "unsupported-option");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn render_many_writes_one_directory_per_document() {
+    let dir = std::env::temp_dir().join(format!("open-office-render-many-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+
+    let created = open_excel_workbook::create(&json!({ "title": "Batch" })).expect("create");
+    let handle = handle_of(&created).expect("handle");
+    let sheet = dir.join("budget.oexcel");
+    open_excel_workbook::save(handle, &sheet, true).expect("save sheet");
+    let _ = open_excel_workbook::close(handle);
+
+    let deck = open_ppt_deck::create(open_ppt_deck::CreateRequest {
+        title: Some("Batch".to_owned()),
+        size: None,
+        theme: None,
+        slides: vec!["Intro".to_owned(), "Plan".to_owned()],
+    })
+    .expect("create deck");
+    let slides = dir.join("deck.project");
+    open_ppt_deck::save(&deck, &slides, true).expect("save deck");
+
+    let word = dir.join("notes.oword");
+    let document = open_word_document::create(&json!({ "title": "No renderer" })).expect("create word");
+    let word_handle = handle_of(&document).expect("handle");
+    open_word_document::save(word_handle, &word, true).expect("save word");
+    let _ = open_word_document::close(word_handle);
+
+    let office = Office::new();
+    let out = dir.join("preview");
+    let inputs = vec![sheet, slides, word];
+    let report = office
+        .render_many(&inputs, &RenderOptions { out_dir: Some(out.clone()), ..RenderOptions::default() })
+        .expect("render batch");
+    assert_eq!(report["rendered"], json!(2));
+    assert_eq!(report["failed"], json!(1));
+    let results = report["results"].as_array().expect("results");
+    assert_eq!(results.len(), 3);
+    assert_eq!(results[0]["ok"], json!(true));
+    assert_eq!(results[0]["totalPages"], json!(1));
+    assert!(out.join("budget").join("page-1.svg").exists());
+    assert_eq!(results[1]["ok"], json!(true));
+    assert!(out.join("deck").join("page-2.svg").exists());
+    assert_eq!(results[2]["ok"], json!(false));
+    assert_eq!(results[2]["code"], json!("unsupported-target"));
+
+    let error = office
+        .render_many(&inputs, &RenderOptions { out: Some(dir.join("one.svg")), ..RenderOptions::default() })
+        .expect_err("out is for one page");
+    assert_eq!(error.code(), "unsupported-option");
+
+    let error = office.render_many(&inputs, &RenderOptions::default()).expect_err("out dir is required for a batch");
+    assert!(error.is_usage());
     let _ = fs::remove_dir_all(&dir);
 }
 
