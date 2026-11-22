@@ -14,7 +14,17 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - run: git config --global core.autocrlf false
+      # The crate uses path dependencies on the four sibling engines, so the
+      # checkout is nested and the engines sit next to it under the workspace.
       - uses: actions/checkout@v4
+        with:
+          path: OpenOffice
+      - name: Checkout sibling engines
+        run: |
+          git clone --depth 1 --branch dev https://github.com/nyar-os/OpenWord.git OpenWord
+          git clone --depth 1 --branch dev https://github.com/nyar-os/OpenExcel.git OpenExcel
+          git clone --depth 1 --branch dev https://github.com/nyar-os/OpenPPT.git OpenPPT
+          git clone --depth 1 --branch dev https://github.com/nyar-os/OpenPDF.git OpenPDF
       - name: Rust Nightly
         uses: actions-rs/toolchain@v1
         with:
@@ -22,6 +32,8 @@ jobs:
             override: true
             components: rustfmt, clippy
       - name: Build
+        working-directory: OpenOffice
         run: cargo build --release
       - name: Tests
+        working-directory: OpenOffice
         run: cargo test --release
