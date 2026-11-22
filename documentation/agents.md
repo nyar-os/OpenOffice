@@ -19,7 +19,7 @@ open-office formats
 | `inspect <file>...` | none | Dispatches to the owning engine; one path returns the single envelope, more paths return a batch report. |
 | `stats <file>...` | none | Lightweight per-family statistics; one path returns the single envelope, more paths return a batch report. |
 | `outline <file>...` | `--points` (optional) | `--points` is accepted only for presentations. One path returns the single envelope, more paths return a batch report. |
-| `search <file>` | `--text <query>` / `-t` (required), `--limit <n>` (optional) | Case-sensitive in every family. Default limit is 100, clamped to 1-500. |
+| `search <file>...` | `--text <query>` / `-t` (required), `--limit <n>` (optional) | Case-sensitive in every family. Default limit is 100, clamped to 1-500. One path returns the single envelope, more paths return a batch report. |
 | `render <file>` | `--sheet <name>` / `-s` (workbooks), `--page <n>` / `-p` (presentations), `--out <file>` / `-o`, `--out-dir <dir>`, `--overwrite` | SVG only. `--out` needs exactly one page; `--out-dir` writes `page-<n>.svg` per page. |
 | `formats` | none | Import and export matrix. |
 | `capabilities` | none | Capability matrix. |
@@ -30,7 +30,7 @@ open-office formats
 
 Unknown options are usage errors. `convert` lowercases `--format`, and batch targets are written as `<out-dir>/<source-stem>.<format>`.
 
-Exit codes: `0` success, `2` usage error, `1` runtime error. A batch conversion, a multi-file `stats` or a multi-file `inspect` prints its JSON report and then exits `1` when `failed` is greater than zero.
+Exit codes: `0` success, `2` usage error, `1` runtime error. A batch conversion, a multi-file `probe`, `stats`, `outline`, `search` or `inspect` prints its JSON report and then exits `1` when `failed` is greater than zero.
 
 ## Report envelopes
 
@@ -198,6 +198,12 @@ Hit shapes:
 | `pdf` | `line`, `start`, `end`, `text`, `context` |
 
 For Word hits, `path` is the enclosing section address or `null`. Offsets are character offsets, not byte offsets. PDF hits are line-scoped occurrences in the extracted Markdown, not PDF pages: `line` is 1-based and page numbers are not tracked per hit. PDF `notes` may also report how many pages lost extractable text.
+
+With more than one path, `search` applies the same query and limit to every document and returns
+
+`{ query, searched, failed, results: [{ source, ok, kind, search } | { source, ok: false, code, error }] }`
+
+where `search` is the single-document envelope above. `limit` applies per document, not to the batch.
 
 ### `render`
 

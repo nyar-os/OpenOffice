@@ -454,6 +454,46 @@ impl Office {
         }))
     }
 
+    /// Searches many documents for the same query in input order.
+    ///
+    /// A failing document does not stop the batch: each entry carries `ok` and
+    /// either the family `kind`/`search` report or the stable `code` and `error`
+    /// message. `limit` applies to each document, not to the batch.
+    pub fn search_many(&self, inputs: &[PathBuf], query: &str, limit: Option<u32>) -> Result<Value, OfficeError> {
+        if inputs.is_empty() {
+            return Err(OfficeError::usage("at least one document is required"));
+        }
+        if query.is_empty() {
+            return Err(OfficeError::usage("`--text` needs a non-empty query").with_code("invalid-query"));
+        }
+        let mut searched = 0;
+        let mut failed = 0;
+        let mut results = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            match self.search(input, query, limit) {
+                Ok(report) => {
+                    searched += 1;
+                    results.push(json!({
+                        "source": input.display().to_string(),
+                        "ok": true,
+                        "kind": report.get("kind").cloned().unwrap_or(Value::Null),
+                        "search": report,
+                    }));
+                }
+                Err(error) => {
+                    failed += 1;
+                    results.push(json!({
+                        "source": input.display().to_string(),
+                        "ok": false,
+                        "code": error.code(),
+                        "error": error.message(),
+                    }));
+                }
+            }
+        }
+        Ok(json!({ "query": query, "searched": searched, "failed": failed, "results": results }))
+    }
+
     /// Renders a workbook sheet or presentation slides to SVG.
     ///
     /// The page list always comes from the owning engine: a workbook yields one
