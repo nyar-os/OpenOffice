@@ -140,6 +140,21 @@ pub struct ConvertOptions {
     pub pages: Option<String>,
 }
 
+/// Options that narrow one `render` request.
+///
+/// Defaults render every page the owning engine produces as SVG.
+#[derive(Debug, Clone, Default)]
+pub struct RenderOptions {
+    /// Workbook sheet name or id; the primary sheet is used when omitted.
+    pub sheet: Option<String>,
+    /// One-based presentation page; renders every page when omitted.
+    pub page: Option<u32>,
+    /// Writes the selected SVG here instead of only reporting it.
+    pub out: Option<PathBuf>,
+    /// Replaces `out` when it already exists.
+    pub overwrite: bool,
+}
+
 /// The four-engine inspector and converter.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Office;
@@ -154,7 +169,7 @@ impl Office {
     pub fn capabilities(&self) -> Value {
         json!({
             "engine": { "package": "open-office", "version": VERSION },
-            "commands": ["probe", "inspect", "convert", "formats", "stats", "outline", "search", "capabilities", "version"],
+            "commands": ["probe", "inspect", "convert", "formats", "stats", "outline", "search", "render", "capabilities", "version"],
             "modules": {
                 "word": open_word_document::capabilities(),
                 "excel": open_excel_workbook::capabilities(),
@@ -352,6 +367,102 @@ impl Office {
             "hits": hits,
             "truncated": truncated,
             "notes": notes,
+        }))
+    }
+
+    /// Renders a workbook sheet or presentation slides to SVG.
+    ///
+    /// The page list always comes from the owning engine: a workbook yields one
+    /// page for the selected sheet, a presentation yields one page per slide.
+    /// `page` selects a one-based presentation page and is refused for
+    /// workbooks; `out` writes the single selected SVG and needs `overwrite`
+    /// when the file already exists. Word and PDF files are refused because
+    /// neither engine exposes an SVG renderer in this build.
+    pub fn render(&self, path: &Path, options: &RenderOptions) -> Result<Value, OfficeError> {
+        let kind = Kind::of_path(path)?;
+        verify_container(path, kind)?;
+        let (revision, pages, losses, total) = match kind {
+            Kind::Excel => {
+                if options.page.is_some() {
+                    return Err(OfficeError::usage("`--page` only applies to presentations").with_code("unsupported-option"));
+                }
+                let opened = open_excel_workbook::open(path).map_err(runtime)?;
+                let handle = handle_of(&opened)?;
+                let request = json!({ "format": "svg", "sheet": options.sheet.clone().unwrap_or_default() });
+                let outcome = open_excel_workbook::render(handle, &request);
+                let _ = open_excel_workbook::close(handle);
+                let report = outcome.map_err(runtime)?;
+                let page = json!({
+                    "index": 0,
+                    "sheet": report.get("sheet").cloned().unwrap_or(Value::Null),
+                    "sheetId": report.get("sheetId").cloned().unwrap_or(Value::Null),
+                    "svg": report.get("svg").cloned().unwrap_or(Value::Null),
+                });
+                (report.get("revision").cloned().unwrap_or(Value::Null), vec![page], json!([]), 1)
+            }
+            Kind::Presentation => {
+                if options.sheet.is_some() {
+                    return Err(OfficeError::usage("`--sheet` only applies to workbooks").with_code("unsupported-option"));
+                }
+                let loaded = load_deck(path)?;
+                let report = open_ppt_deck::render(&loaded.deck).map_err(runtime)?;
+                let all = report.get("pages").and_then(Value::as_array).cloned().unwrap_or_default();
+                let total = all.len();
+                let pages = match options.page {
+                    Some(number) => {
+                        let index = number.checked_sub(1).ok_or_else(|| {
+                            OfficeError::usage("`--page` starts at 1").with_code("page-out-of-range")
+                        })? as usize;
+                        let page = all.get(index).cloned().ok_or_else(|| {
+                            OfficeError::usage(format!("page {number} is outside this {total}-page presentation"))
+                                .with_code("page-out-of-range")
+                        })?;
+                        vec![page]
+                    }
+                    None => all,
+                };
+                let losses = report.get("losses").cloned().unwrap_or_else(|| json!([]));
+                (report.get("revision").cloned().unwrap_or(Value::Null), pages, losses, total)
+            }
+            Kind::Word | Kind::Pdf => {
+                return Err(OfficeError::usage(format!(
+                    "`render` supports workbooks and presentations; {} has no SVG renderer in this build",
+                    kind.label()
+                ))
+                .with_code("unsupported-target"));
+            }
+        };
+        if let Some(out) = &options.out {
+            if pages.len() != 1 {
+                return Err(OfficeError::usage(
+                    "`--out` needs exactly one page; pass `--page <n>` to choose one of the presentation pages",
+                )
+                .with_code("multiple-pages"));
+            }
+            if out.exists() && !options.overwrite {
+                return Err(OfficeError::runtime(format!(
+                    "{} already exists; pass --overwrite to replace it",
+                    out.display()
+                ))
+                .with_code("target-exists"));
+            }
+            let svg = pages[0]
+                .get("svg")
+                .and_then(Value::as_str)
+                .ok_or_else(|| OfficeError::runtime("the engine returned no SVG for this page"))?;
+            fs::write(out, svg).map_err(|error| {
+                OfficeError::runtime(format!("cannot write {}: {error}", out.display())).with_code("unwritable")
+            })?;
+        }
+        Ok(json!({
+            "kind": kind.label(),
+            "path": path.display().to_string(),
+            "format": "svg",
+            "revision": revision,
+            "out": options.out.as_ref().map(|path| path.display().to_string()),
+            "totalPages": total,
+            "pages": pages,
+            "losses": losses,
         }))
     }
 

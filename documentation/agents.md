@@ -20,6 +20,7 @@ open-office formats
 | `stats <file>` | none | Lightweight per-family statistics. |
 | `outline <file>` | `--points` (optional) | `--points` is accepted only for presentations. |
 | `search <file>` | `--text <query>` / `-t` (required), `--limit <n>` (optional) | Case-sensitive in every family. Default limit is 100, clamped to 1-500. |
+| `render <file>` | `--sheet <name>` / `-s` (workbooks), `--page <n>` / `-p` (presentations), `--out <file>` / `-o`, `--overwrite` | SVG only. `--out` needs exactly one page. |
 | `formats` | none | Import and export matrix. |
 | `capabilities` | none | Capability matrix. |
 | `convert <file>` | `--format <f>` / `-f` (required), `--out <file>` / `-o` (required), `--overwrite`, `--pages <ranges>` | Single-input form. `--pages` is PDF-only. |
@@ -60,7 +61,7 @@ Every command returns an object. The shared keys are `kind` (one of `word`, `exc
 ```json
 {
   "engine": { "package": "open-office", "version": "0.1.0" },
-  "commands": ["probe", "inspect", "convert", "formats", "stats", "outline", "search", "capabilities", "version"],
+  "commands": ["probe", "inspect", "convert", "formats", "stats", "outline", "search", "render", "capabilities", "version"],
   "modules": {
     "word": {},
     "excel": {},
@@ -158,6 +159,25 @@ Hit shapes:
 
 For Word hits, `path` is the enclosing section address or `null`. Offsets are character offsets, not byte offsets. PDF hits are line-scoped occurrences in the extracted Markdown, not PDF pages: `line` is 1-based and page numbers are not tracked per hit. PDF `notes` may also report how many pages lost extractable text.
 
+### `render`
+
+```json
+{
+  "kind": "presentation",
+  "path": "deck.pptx",
+  "format": "svg",
+  "revision": 3,
+  "out": null,
+  "totalPages": 2,
+  "pages": [
+    { "slideId": "slide-1", "index": 0, "widthPx": 960, "heightPx": 540, "svg": "<svg …" }
+  ],
+  "losses": []
+}
+```
+
+A workbook yields exactly one page for the selected sheet (`sheet`, `sheetId`, `svg`); a presentation yields one page per slide. `--page` is one-based, selects a single presentation page and is refused for workbooks; `--sheet` is refused for presentations. `--out` writes the single selected SVG and fails with `multiple-pages` when the selection has more than one page, and with `target-exists` unless `--overwrite` is passed. Word and PDF are refused with `unsupported-target` because neither bundled engine exposes an SVG renderer in this build.
+
 ### `convert` (single input)
 
 ```json
@@ -224,7 +244,7 @@ Routing is by lowercased extension:
 
 `.project`, `.oppt` and `.opresent` open as native presentations; every other presentation extension is imported as PresentationML and reports import losses. Files without an extension fail with `missing-extension`; any other extension fails with `unsupported-extension`.
 
-After routing, `inspect`, `stats`, `outline`, `search` and `convert` read the whole file and cross-check the detected container against the route. A mismatch is refused with the probe evidence. When the bytes do not resolve a family, the extension route stands. `probe` performs no routing and never opens the document.
+After routing, `inspect`, `stats`, `outline`, `search`, `render` and `convert` read the whole file and cross-check the detected container against the route. A mismatch is refused with the probe evidence. When the bytes do not resolve a family, the extension route stands. `probe` performs no routing and never opens the document.
 
 ## Guardrails
 
@@ -232,6 +252,7 @@ After routing, `inspect`, `stats`, `outline`, `search` and `convert` read the wh
 - Do not rename a file to force a route. The byte check will reject a mismatched container.
 - `--overwrite` is required to replace an existing output. There is no implicit replacement.
 - `--points` applies to presentations only.
+- `render` writes SVG only; `--sheet` is workbook-only and `--page` is presentation-only. `--out` needs a single selected page.
 - `--pages` applies to single-input PDF text conversion only; it cannot be combined with multiple inputs.
 - Search is case-sensitive everywhere. A query that works in one family will not silently become case-insensitive in another.
 - PDF search reports lines in extracted Markdown, not PDF pages.

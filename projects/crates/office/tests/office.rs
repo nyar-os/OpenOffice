@@ -398,3 +398,96 @@ fn search_finds_presentation_text_through_the_office_facade() {
     assert_eq!(report["hits"][0]["text"], json!("Roadmap"));
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn render_writes_a_workbook_sheet_and_protects_the_target() {
+    let dir = std::env::temp_dir().join(format!("open-office-render-excel-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let created = open_excel_workbook::create(&json!({ "title": "Render" })).expect("create");
+    let handle = handle_of(&created).expect("handle");
+    open_excel_workbook::edit(
+        handle,
+        &json!({ "operations": [{ "op": "cell.set", "sheet": "Sheet1", "reference": "A1", "value": "Widget" }] }),
+    )
+    .expect("seed");
+    let path = dir.join("render.oexcel");
+    open_excel_workbook::save(handle, &path, true).expect("save");
+    let _ = open_excel_workbook::close(handle);
+
+    let office = Office::new();
+    let report = office.render(&path, &RenderOptions::default()).expect("render");
+    assert_eq!(report["kind"], json!("excel"));
+    assert_eq!(report["format"], json!("svg"));
+    assert_eq!(report["totalPages"], json!(1));
+    assert_eq!(report["pages"][0]["sheet"], json!("Sheet1"));
+    assert!(report["pages"][0]["svg"].as_str().expect("svg").starts_with("<svg"));
+
+    let out = dir.join("sheet.svg");
+    let options = RenderOptions { out: Some(out.clone()), ..RenderOptions::default() };
+    let written = office.render(&path, &options).expect("write svg");
+    assert_eq!(written["out"], json!(out.display().to_string()));
+    assert!(fs::read_to_string(&out).expect("read svg").starts_with("<svg"));
+
+    let error = office.render(&path, &options).expect_err("existing target");
+    assert_eq!(error.code(), "target-exists");
+
+    let error = office.render(&path, &RenderOptions { page: Some(1), ..RenderOptions::default() }).expect_err("page");
+    assert_eq!(error.code(), "unsupported-option");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn render_lists_presentation_pages_and_selects_one() {
+    let dir = std::env::temp_dir().join(format!("open-office-render-deck-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let deck = open_ppt_deck::create(open_ppt_deck::CreateRequest {
+        title: Some("Render".to_owned()),
+        size: None,
+        theme: None,
+        slides: vec!["Intro".to_owned(), "Plan".to_owned()],
+    })
+    .expect("create");
+    let path = dir.join("render.project");
+    open_ppt_deck::save(&deck, &path, true).expect("save");
+
+    let office = Office::new();
+    let report = office.render(&path, &RenderOptions::default()).expect("render");
+    assert_eq!(report["kind"], json!("presentation"));
+    assert_eq!(report["totalPages"], json!(2));
+    assert_eq!(report["pages"].as_array().expect("pages").len(), 2);
+    assert!(report["pages"][1]["svg"].as_str().expect("svg").starts_with("<svg"));
+
+    let selected =
+        office.render(&path, &RenderOptions { page: Some(2), ..RenderOptions::default() }).expect("page 2");
+    assert_eq!(selected["pages"].as_array().expect("pages").len(), 1);
+    assert_eq!(selected["pages"][0]["index"], json!(1));
+
+    let error = office.render(&path, &RenderOptions { page: Some(3), ..RenderOptions::default() }).expect_err("range");
+    assert_eq!(error.code(), "page-out-of-range");
+
+    let out = dir.join("one.svg");
+    let error =
+        office.render(&path, &RenderOptions { out: Some(out), ..RenderOptions::default() }).expect_err("ambiguous out");
+    assert_eq!(error.code(), "multiple-pages");
+
+    let error = office.render(&path, &RenderOptions { sheet: Some("Sheet1".to_owned()), ..RenderOptions::default() })
+        .expect_err("sheet is for workbooks");
+    assert_eq!(error.code(), "unsupported-option");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn render_refuses_families_without_a_renderer() {
+    let dir = std::env::temp_dir().join(format!("open-office-render-word-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let created = open_word_document::create(&json!({ "title": "No renderer" })).expect("create");
+    let handle = handle_of(&created).expect("handle");
+    let path = dir.join("render.oword");
+    open_word_document::save(handle, &path, true).expect("save");
+    let _ = open_word_document::close(handle);
+
+    let error = Office::new().render(&path, &RenderOptions::default()).expect_err("no word renderer");
+    assert_eq!(error.code(), "unsupported-target");
+    assert!(error.is_usage());
+    let _ = fs::remove_dir_all(&dir);
+}
