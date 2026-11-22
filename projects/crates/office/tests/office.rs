@@ -69,6 +69,37 @@ fn probe_many_reports_each_input_in_order() {
 }
 
 #[test]
+fn outline_many_reports_each_input_in_order() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-outline-many-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let source = dir.join("notes.md");
+    fs::write(&source, b"# Title\n\n## Child\n\nBody.\n").expect("write markdown");
+
+    let inputs = vec![source.clone(), PathBuf::from("missing-outline.docx")];
+    let report = office.outline_many(&inputs, false).expect("outline batch");
+    assert_eq!(report["outlined"], json!(1));
+    assert_eq!(report["failed"], json!(1));
+    let results = report["results"].as_array().expect("results array");
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0]["source"], json!(source.display().to_string()));
+    assert_eq!(results[0]["ok"], json!(true));
+    assert_eq!(results[0]["kind"], json!("word"));
+    assert_eq!(results[0]["outline"]["items"][0]["title"], json!("Title"));
+    assert_eq!(results[1]["source"], json!("missing-outline.docx"));
+    assert_eq!(results[1]["ok"], json!(false));
+    assert_eq!(results[1]["code"], json!("not-found"));
+
+    let points = office.outline_many(&[source.clone()], true).expect("points batch");
+    assert_eq!(points["outlined"], json!(0));
+    assert_eq!(points["failed"], json!(1));
+    assert_eq!(points["results"][0]["code"], json!("unsupported-option"));
+
+    assert!(office.outline_many(&[], false).expect_err("empty inputs").is_usage());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn stats_many_reports_each_input_in_order() {
     let office = Office::new();
     let dir = std::env::temp_dir().join(format!("open-office-stats-many-{}", std::process::id()));

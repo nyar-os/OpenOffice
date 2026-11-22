@@ -365,6 +365,44 @@ impl Office {
         }))
     }
 
+    /// Projects many documents into their outlines in input order.
+    ///
+    /// A failing document does not stop the batch: each entry carries `ok` and
+    /// either the family `kind`/`outline` or the stable `code` and `error`.
+    /// `points` applies to presentations only and fails other families the same
+    /// way single-document [`Office::outline`] does.
+    pub fn outline_many(&self, inputs: &[PathBuf], points: bool) -> Result<Value, OfficeError> {
+        if inputs.is_empty() {
+            return Err(OfficeError::usage("at least one document is required"));
+        }
+        let mut outlined = 0;
+        let mut failed = 0;
+        let mut results = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            match self.outline(input, points) {
+                Ok(report) => {
+                    outlined += 1;
+                    results.push(json!({
+                        "source": input.display().to_string(),
+                        "ok": true,
+                        "kind": report.get("kind").cloned().unwrap_or(Value::Null),
+                        "outline": report.get("outline").cloned().unwrap_or(Value::Null),
+                    }));
+                }
+                Err(error) => {
+                    failed += 1;
+                    results.push(json!({
+                        "source": input.display().to_string(),
+                        "ok": false,
+                        "code": error.code(),
+                        "error": error.message(),
+                    }));
+                }
+            }
+        }
+        Ok(json!({ "outlined": outlined, "failed": failed, "results": results }))
+    }
+
     /// Searches the text one document owns and reports hits with stable locations.
     ///
     /// Matching is case-sensitive for every family so one query behaves the same

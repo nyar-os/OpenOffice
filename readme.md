@@ -48,7 +48,7 @@ You can also place a prebuilt `open-office` binary on your `PATH`. Source builds
 - **Preview without the app.** `render` asks the owning engine for SVG: one page for a workbook sheet, one page per presentation slide, with `--out` writing a single selected page and `--out-dir` writing every page.
 - **Real conversion targets.** A workbook exports to CSV, JSON, HTML or PDF, a deck becomes PPTX or PDF, a PDF extracts to Markdown or text. Unsupported targets are refused with the list of targets that work.
 - **Guardrails by default.** Existing outputs require `--overwrite`, `--points` is accepted only for presentations, `--pages` only for PDF text, and bytes that contradict the extension are rejected.
-- **Batch without surprises.** Multiple inputs convert into an output directory named after each source stem, and `stats` and `inspect` accept several files at once; one failure does not stop the rest.
+- **Batch without surprises.** Multiple inputs convert into an output directory named after each source stem, and `stats`, `inspect`, `outline` and `probe` accept several files at once; one failure does not stop the rest.
 - **Stable locations.** Search hits carry the owning engine's own locators, and batch failures carry stable error codes.
 
 Supported formats:

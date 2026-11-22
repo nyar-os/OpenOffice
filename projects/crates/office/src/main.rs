@@ -126,9 +126,12 @@ fn document_paths(arguments: &[String], missing: &str) -> Result<Vec<PathBuf>, O
     Ok(paths)
 }
 
-/// Parses `outline` options and hands one request to the library.
+/// Parses `outline` paths and options, reporting one document or a batch.
+///
+/// One path keeps the single-document envelope; more than one path returns a
+/// per-input batch report and exits non-zero when any input failed.
 fn outline(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
-    let mut path = None;
+    let mut paths = Vec::new();
     let mut points = false;
     for argument in arguments {
         match argument.as_str() {
@@ -136,12 +139,22 @@ fn outline(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
             value if value.starts_with('-') => {
                 return Err(OfficeError::usage(format!("unknown option `{value}`")));
             }
-            value if path.is_none() => path = Some(value.to_string()),
-            _ => return Err(OfficeError::usage("outline takes exactly one document path")),
+            value => paths.push(PathBuf::from(value)),
         }
     }
-    let path = path.ok_or_else(|| OfficeError::usage("a document path is required"))?;
-    print_json(&office.outline(Path::new(&path), points)?)
+    if paths.is_empty() {
+        return Err(OfficeError::usage("a document path is required"));
+    }
+    if paths.len() == 1 {
+        return print_json(&office.outline(&paths[0], points)?);
+    }
+    let report = office.outline_many(&paths, points)?;
+    print_json(&report)?;
+    let failed = report.get("failed").and_then(Value::as_u64).unwrap_or_default();
+    if failed > 0 {
+        return Err(OfficeError::runtime(format!("{failed} of {} documents failed", paths.len())));
+    }
+    Ok(())
 }
 
 /// Parses `search` options and hands one request to the library.
@@ -291,7 +304,7 @@ fn usage() {
          \x20 open-office probe <file>...\n\
          \x20 open-office inspect <file>...\n\
          \x20 open-office stats <file>...\n\
-         \x20 open-office outline <file> [--points]\n\
+         \x20 open-office outline <file>... [--points]\n\
          \x20 open-office search <file> --text <query> [--limit <n>]\n\
          \x20 open-office render <file> [--sheet <name>] [--page <n>] [--out <file> | --out-dir <dir>] [--overwrite]\n\
          \x20 open-office formats\n\
@@ -309,6 +322,7 @@ fn usage() {
          \x20 open-office stats a.docx b.pdf c.xlsx\n\
          \x20 open-office outline report.docx\n\
          \x20 open-office outline deck.pptx --points\n\
+         \x20 open-office outline a.docx b.pdf c.pptx\n\
          \x20 open-office search report.docx --text invoice\n\
          \x20 open-office render budget.xlsx --out sheet.svg\n\
          \x20 open-office render deck.pptx --page 2 --out slide-2.svg\n\
