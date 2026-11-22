@@ -16,7 +16,7 @@ open-office formats
 | Command | Flags | Notes |
 |---------|-------|-------|
 | `probe <file>` | none | Reads the bytes; does not route by extension and does not open the document. Aliases: `inspect-file`, `inspect_file`. |
-| `inspect <file>` | none | Dispatches to the owning engine. |
+| `inspect <file>...` | none | Dispatches to the owning engine; one path returns the single envelope, more paths return a batch report. |
 | `stats <file>...` | none | Lightweight per-family statistics; one path returns the single envelope, more paths return a batch report. |
 | `outline <file>` | `--points` (optional) | `--points` is accepted only for presentations. |
 | `search <file>` | `--text <query>` / `-t` (required), `--limit <n>` (optional) | Case-sensitive in every family. Default limit is 100, clamped to 1-500. |
@@ -30,7 +30,7 @@ open-office formats
 
 Unknown options are usage errors. `convert` lowercases `--format`, and batch targets are written as `<out-dir>/<source-stem>.<format>`.
 
-Exit codes: `0` success, `2` usage error, `1` runtime error. A batch conversion or a multi-file `stats` prints its JSON report and then exits `1` when `failed` is greater than zero.
+Exit codes: `0` success, `2` usage error, `1` runtime error. A batch conversion, a multi-file `stats` or a multi-file `inspect` prints its JSON report and then exits `1` when `failed` is greater than zero.
 
 ## Report envelopes
 
@@ -133,6 +133,24 @@ at the first failure:
 
 The batch form prints its JSON report and then exits `1` when `failed` is
 greater than zero.
+
+With more than one path, `inspect` reports every input in order and does not
+stop at the first failure. Successful entries keep the full per-family
+`inspect` envelope under `inspect`:
+
+```json
+{
+  "inspected": 1,
+  "failed": 1,
+  "results": [
+    { "source": "report.docx", "ok": true, "kind": "word", "inspect": { "kind": "word", "path": "report.docx", "summary": {}, "stats": {}, "inspect": {} } },
+    { "source": "missing.pdf", "ok": false, "code": "not-found", "error": "..." }
+  ]
+}
+```
+
+The same batch rules apply: the JSON report is printed first, then the process
+exits `1` when `failed` is greater than zero.
 
 ### `outline`
 

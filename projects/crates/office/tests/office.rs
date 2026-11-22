@@ -46,6 +46,32 @@ fn stats_many_reports_each_input_in_order() {
 }
 
 #[test]
+fn inspect_many_reports_each_input_in_order() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-inspect-many-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let source = dir.join("notes.md");
+    fs::write(&source, b"# Title\n\nBody text.\n").expect("write markdown");
+
+    let inputs = vec![source.clone(), PathBuf::from("missing-inspect.docx")];
+    let report = office.inspect_many(&inputs).expect("inspect batch");
+    assert_eq!(report["inspected"], json!(1));
+    assert_eq!(report["failed"], json!(1));
+    let results = report["results"].as_array().expect("results array");
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0]["source"], json!(source.display().to_string()));
+    assert_eq!(results[0]["ok"], json!(true));
+    assert_eq!(results[0]["kind"], json!("word"));
+    assert!(results[0]["inspect"].is_object());
+    assert_eq!(results[1]["source"], json!("missing-inspect.docx"));
+    assert_eq!(results[1]["ok"], json!(false));
+    assert_eq!(results[1]["code"], json!("not-found"));
+
+    assert!(office.inspect_many(&[]).expect_err("empty inputs").is_usage());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn convert_many_reports_missing_sources_per_item() {
     let office = Office::new();
     let out_dir = std::env::temp_dir().join(format!("open-office-convert-many-{}", std::process::id()));

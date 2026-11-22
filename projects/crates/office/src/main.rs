@@ -46,10 +46,7 @@ fn run(arguments: &[String]) -> Result<(), OfficeError> {
             let path = positional(rest, "a file path is required")?;
             print_json(&office.probe(Path::new(&path))?)
         }
-        "inspect" => {
-            let path = positional(rest, "a document path is required")?;
-            print_json(&office.inspect(Path::new(&path))?)
-        }
+        "inspect" => inspect(&office, rest),
         "stats" => stats(&office, rest),
         "outline" => outline(&office, rest),
         "search" => search(&office, rest),
@@ -68,16 +65,7 @@ fn run(arguments: &[String]) -> Result<(), OfficeError> {
 /// One path keeps the single-document envelope; more than one path returns a
 /// per-input batch report and exits non-zero when any input failed.
 fn stats(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
-    let mut paths = Vec::new();
-    for argument in arguments {
-        if argument.starts_with('-') {
-            return Err(OfficeError::usage(format!("unknown option `{argument}`")));
-        }
-        paths.push(PathBuf::from(argument));
-    }
-    if paths.is_empty() {
-        return Err(OfficeError::usage("a document path is required"));
-    }
+    let paths = document_paths(arguments, "a document path is required")?;
     if paths.len() == 1 {
         return print_json(&office.stats(&paths[0])?);
     }
@@ -88,6 +76,39 @@ fn stats(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
         return Err(OfficeError::runtime(format!("{failed} of {} documents failed", paths.len())));
     }
     Ok(())
+}
+
+/// Parses `inspect` paths and reports one document or a batch.
+///
+/// One path keeps the single-document envelope; more than one path returns a
+/// per-input batch report and exits non-zero when any input failed.
+fn inspect(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
+    let paths = document_paths(arguments, "a document path is required")?;
+    if paths.len() == 1 {
+        return print_json(&office.inspect(&paths[0])?);
+    }
+    let report = office.inspect_many(&paths)?;
+    print_json(&report)?;
+    let failed = report.get("failed").and_then(Value::as_u64).unwrap_or_default();
+    if failed > 0 {
+        return Err(OfficeError::runtime(format!("{failed} of {} documents failed", paths.len())));
+    }
+    Ok(())
+}
+
+/// Collects positional document paths, rejecting options and an empty list.
+fn document_paths(arguments: &[String], missing: &str) -> Result<Vec<PathBuf>, OfficeError> {
+    let mut paths = Vec::new();
+    for argument in arguments {
+        if argument.starts_with('-') {
+            return Err(OfficeError::usage(format!("unknown option `{argument}`")));
+        }
+        paths.push(PathBuf::from(argument));
+    }
+    if paths.is_empty() {
+        return Err(OfficeError::usage(missing));
+    }
+    Ok(paths)
 }
 
 /// Parses `outline` options and hands one request to the library.
@@ -257,7 +278,7 @@ fn usage() {
          \n\
          USAGE:\n\
          \x20 open-office probe <file>\n\
-         \x20 open-office inspect <file>\n\
+         \x20 open-office inspect <file>...\n\
          \x20 open-office stats <file>...\n\
          \x20 open-office outline <file> [--points]\n\
          \x20 open-office search <file> --text <query> [--limit <n>]\n\
@@ -271,6 +292,7 @@ fn usage() {
          EXAMPLES:\n\
          \x20 open-office probe download.bin\n\
          \x20 open-office inspect report.docx\n\
+         \x20 open-office inspect a.docx b.pdf c.xlsx\n\
          \x20 open-office stats report.docx\n\
          \x20 open-office stats a.docx b.pdf c.xlsx\n\
          \x20 open-office outline report.docx\n\

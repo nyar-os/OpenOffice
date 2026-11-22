@@ -700,6 +700,42 @@ impl Office {
         }
         Ok(json!({ "inspected": inspected, "failed": failed, "results": results }))
     }
+
+    /// Inspects many documents in input order.
+    ///
+    /// A failing document does not stop the batch: each entry carries `ok` and
+    /// either the full inspect report or the stable `code` and `error` message.
+    pub fn inspect_many(&self, inputs: &[PathBuf]) -> Result<Value, OfficeError> {
+        if inputs.is_empty() {
+            return Err(OfficeError::usage("at least one document is required"));
+        }
+        let mut inspected = 0;
+        let mut failed = 0;
+        let mut results = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            match self.inspect(input) {
+                Ok(report) => {
+                    inspected += 1;
+                    results.push(json!({
+                        "source": input.display().to_string(),
+                        "ok": true,
+                        "kind": report.get("kind").cloned().unwrap_or(Value::Null),
+                        "inspect": report,
+                    }));
+                }
+                Err(error) => {
+                    failed += 1;
+                    results.push(json!({
+                        "source": input.display().to_string(),
+                        "ok": false,
+                        "code": error.code(),
+                        "error": error.message(),
+                    }));
+                }
+            }
+        }
+        Ok(json!({ "inspected": inspected, "failed": failed, "results": results }))
+    }
 }
 
 /// Cross-checks the extension route against what the bytes really are.
