@@ -90,7 +90,7 @@ fn outline_many_reports_each_input_in_order() {
     assert_eq!(results[1]["ok"], json!(false));
     assert_eq!(results[1]["code"], json!("not-found"));
 
-    let points = office.outline_many(&[source.clone()], true).expect("points batch");
+    let points = office.outline_many(std::slice::from_ref(&source), true).expect("points batch");
     assert_eq!(points["outlined"], json!(0));
     assert_eq!(points["failed"], json!(1));
     assert_eq!(points["results"][0]["code"], json!("unsupported-option"));
