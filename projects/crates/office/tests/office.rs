@@ -20,6 +20,55 @@ fn convert_many_requires_inputs_format_and_out_dir() {
 }
 
 #[test]
+fn probe_many_reports_each_input_in_order() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-probe-many-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let pdf = dir.join("paper.pdf");
+    fs::write(&pdf, b"%PDF-1.7\n").expect("write pdf");
+    let markdown = dir.join("notes.md");
+    fs::write(&markdown, b"# Title\n\nBody.\n").expect("write markdown");
+    let unproven = dir.join("notes.docx");
+    fs::write(&unproven, b"just words").expect("write unproven");
+    let missing = dir.join("missing.pdf");
+
+    let inputs = vec![pdf.clone(), markdown.clone(), unproven.clone(), missing.clone()];
+    let report = office.probe_many(&inputs).expect("probe batch");
+    assert_eq!(report["probed"], json!(3));
+    assert_eq!(report["failed"], json!(1));
+    let results = report["results"].as_array().expect("results array");
+    assert_eq!(results.len(), 4);
+
+    assert_eq!(results[0]["source"], json!(pdf.display().to_string()));
+    assert_eq!(results[0]["ok"], json!(true));
+    assert_eq!(results[0]["format"], json!("pdf"));
+    assert_eq!(results[0]["container"], json!("pdf"));
+    assert_eq!(results[0]["confidence"], json!("verified"));
+    assert_eq!(results[0]["candidates"], json!(["pdf"]));
+    assert!(results[0]["evidence"].as_str().expect("evidence").contains("%PDF-"));
+    assert!(results[0].get("path").is_none());
+
+    assert_eq!(results[1]["source"], json!(markdown.display().to_string()));
+    assert_eq!(results[1]["ok"], json!(true));
+    assert_eq!(results[1]["format"], json!("markdown"));
+    assert_eq!(results[1]["confidence"], json!("hinted"));
+    assert!(results[1]["evidence"].as_str().is_some());
+
+    assert_eq!(results[2]["source"], json!(unproven.display().to_string()));
+    assert_eq!(results[2]["ok"], json!(true));
+    assert_eq!(results[2]["format"], Value::Null);
+    assert_eq!(results[2]["confidence"], json!("unknown"));
+    assert!(results[2]["evidence"].as_str().is_some());
+
+    assert_eq!(results[3]["source"], json!(missing.display().to_string()));
+    assert_eq!(results[3]["ok"], json!(false));
+    assert_eq!(results[3]["code"], json!("not-found"));
+
+    assert!(office.probe_many(&[]).expect_err("empty inputs").is_usage());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn stats_many_reports_each_input_in_order() {
     let office = Office::new();
     let dir = std::env::temp_dir().join(format!("open-office-stats-many-{}", std::process::id()));

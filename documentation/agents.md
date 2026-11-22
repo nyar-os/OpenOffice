@@ -15,7 +15,7 @@ open-office formats
 
 | Command | Flags | Notes |
 |---------|-------|-------|
-| `probe <file>` | none | Reads the bytes; does not route by extension and does not open the document. Aliases: `inspect-file`, `inspect_file`. |
+| `probe <file>...` | none | Reads the bytes; does not route by extension and does not open the document. One path returns the single envelope, more paths return a batch report. Aliases: `inspect-file`, `inspect_file`. |
 | `inspect <file>...` | none | Dispatches to the owning engine; one path returns the single envelope, more paths return a batch report. |
 | `stats <file>...` | none | Lightweight per-family statistics; one path returns the single envelope, more paths return a batch report. |
 | `outline <file>` | `--points` (optional) | `--points` is accepted only for presentations. |
@@ -55,6 +55,11 @@ Every command returns an object. The shared keys are `kind` (one of `word`, `exc
 - `confidence`: `verified`, `hinted`, `ambiguous` or `unknown`.
 - `format` is `null` when the bytes do not prove a format; `candidates` keeps every package still possible and `evidence` quotes what was found.
 - The extension is a hint only. `probe` accepts a path with no extension and a path whose extension is unknown.
+
+With more than one path, `probe` returns
+`{ probed, failed, results: [{ source, ok, format, container, confidence, candidates, evidence? } | { source, ok: false, code, error }] }`
+in input order and exits non-zero when any file failed. `evidence` appears only
+when the detector quoted some.
 
 ### `capabilities`
 

@@ -226,6 +226,50 @@ impl Office {
         }))
     }
 
+    /// Probes many files in input order, using bytes first and extensions as hints.
+    ///
+    /// A failing file does not stop the batch: each entry carries `ok` and
+    /// either the detection fields or the stable `code` and `error` message.
+    /// `evidence` is present only when the detector quoted some.
+    pub fn probe_many(&self, inputs: &[PathBuf]) -> Result<Value, OfficeError> {
+        if inputs.is_empty() {
+            return Err(OfficeError::usage("at least one document is required"));
+        }
+        let mut probed = 0;
+        let mut failed = 0;
+        let mut results = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            match self.probe(input) {
+                Ok(report) => {
+                    probed += 1;
+                    let mut entry = json!({
+                        "source": input.display().to_string(),
+                        "ok": true,
+                        "format": report.get("format").cloned().unwrap_or(Value::Null),
+                        "container": report.get("container").cloned().unwrap_or(Value::Null),
+                        "confidence": report.get("confidence").cloned().unwrap_or(Value::Null),
+                        "candidates": report.get("candidates").cloned().unwrap_or(Value::Null),
+                    });
+                    let evidence = report.get("evidence").cloned().unwrap_or(Value::Null);
+                    if evidence.as_str().map(|text| !text.is_empty()).unwrap_or(false) {
+                        entry["evidence"] = evidence;
+                    }
+                    results.push(entry);
+                }
+                Err(error) => {
+                    failed += 1;
+                    results.push(json!({
+                        "source": input.display().to_string(),
+                        "ok": false,
+                        "code": error.code(),
+                        "error": error.message(),
+                    }));
+                }
+            }
+        }
+        Ok(json!({ "probed": probed, "failed": failed, "results": results }))
+    }
+
     /// Reports lightweight per-family statistics for one document.
     pub fn stats(&self, path: &Path) -> Result<Value, OfficeError> {
         let kind = Kind::of_path(path)?;

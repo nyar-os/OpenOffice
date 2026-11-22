@@ -42,10 +42,7 @@ fn run(arguments: &[String]) -> Result<(), OfficeError> {
         }
         "capabilities" => print_json(&office.capabilities()),
         "formats" => print_json(&office.formats()),
-        "probe" | "inspect-file" | "inspect_file" => {
-            let path = positional(rest, "a file path is required")?;
-            print_json(&office.probe(Path::new(&path))?)
-        }
+        "probe" | "inspect-file" | "inspect_file" => probe(&office, rest),
         "inspect" => inspect(&office, rest),
         "stats" => stats(&office, rest),
         "outline" => outline(&office, rest),
@@ -58,6 +55,24 @@ fn run(arguments: &[String]) -> Result<(), OfficeError> {
         }
         other => Err(OfficeError::usage(format!("unknown command `{other}`"))),
     }
+}
+
+/// Parses `probe` paths and reports one file or a batch.
+///
+/// One path keeps the single-document envelope; more than one path returns a
+/// per-input batch report and exits non-zero when any input failed.
+fn probe(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
+    let paths = document_paths(arguments, "a file path is required")?;
+    if paths.len() == 1 {
+        return print_json(&office.probe(&paths[0])?);
+    }
+    let report = office.probe_many(&paths)?;
+    print_json(&report)?;
+    let failed = report.get("failed").and_then(Value::as_u64).unwrap_or_default();
+    if failed > 0 {
+        return Err(OfficeError::runtime(format!("{failed} of {} files failed", paths.len())));
+    }
+    Ok(())
 }
 
 /// Parses `stats` paths and hands one or many requests to the library.
@@ -253,10 +268,6 @@ fn convert(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
     Ok(())
 }
 
-fn positional(arguments: &[String], message: &str) -> Result<String, OfficeError> {
-    arguments.iter().find(|argument| !argument.starts_with('-')).cloned().ok_or_else(|| OfficeError::usage(message))
-}
-
 fn value_of(arguments: &[String], index: &mut usize, name: &str) -> Result<String, OfficeError> {
     let next = *index + 1;
     let value = arguments.get(next).ok_or_else(|| OfficeError::usage(format!("`{name}` needs a value")))?;
@@ -277,7 +288,7 @@ fn usage() {
          pptx and PDF files.\n\
          \n\
          USAGE:\n\
-         \x20 open-office probe <file>\n\
+         \x20 open-office probe <file>...\n\
          \x20 open-office inspect <file>...\n\
          \x20 open-office stats <file>...\n\
          \x20 open-office outline <file> [--points]\n\
@@ -291,6 +302,7 @@ fn usage() {
          \n\
          EXAMPLES:\n\
          \x20 open-office probe download.bin\n\
+         \x20 open-office probe a.bin b.docx c.pdf\n\
          \x20 open-office inspect report.docx\n\
          \x20 open-office inspect a.docx b.pdf c.xlsx\n\
          \x20 open-office stats report.docx\n\
