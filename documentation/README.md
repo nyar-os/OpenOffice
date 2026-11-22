@@ -30,5 +30,5 @@ pnpm run check:rust   # fmt + clippy -D warnings + test
 ## 注意
 
 各 Office 产品仓库的能力以各自 `capabilities` 输出为准。OpenOffice 已提供真实的
-`open-office inspect / convert` 二进制，通过路径依赖直接调用四个引擎，不复制模型、
+`open-office inspect / outline / search / stats / convert` 二进制，通过路径依赖直接调用四个引擎，不复制模型、
 不伪造格式转换；其余产品仍按各自仓库的骨架/成熟度逐步推进。

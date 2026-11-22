@@ -55,6 +55,7 @@ fn run(arguments: &[String]) -> Result<(), OfficeError> {
             print_json(&office.stats(Path::new(&path))?)
         }
         "outline" => outline(&office, rest),
+        "search" => search(&office, rest),
         "convert" => convert(&office, rest),
         "help" | "--help" | "-h" => {
             usage();
@@ -80,6 +81,34 @@ fn outline(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
     }
     let path = path.ok_or_else(|| OfficeError::usage("a document path is required"))?;
     print_json(&office.outline(Path::new(&path), points)?)
+}
+
+/// Parses `search` options and hands one request to the library.
+fn search(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
+    let mut path = None;
+    let mut text = None;
+    let mut limit = None;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--text" | "-t" => {
+                text = Some(value_of(arguments, &mut index, "--text")?);
+            }
+            "--limit" => {
+                let value = value_of(arguments, &mut index, "--limit")?;
+                limit = Some(value.parse::<u32>().map_err(|_| OfficeError::usage("`--limit` needs a positive integer"))?);
+            }
+            value if value.starts_with('-') => {
+                return Err(OfficeError::usage(format!("unknown option `{value}`")));
+            }
+            value if path.is_none() => path = Some(value.to_string()),
+            _ => return Err(OfficeError::usage("search takes exactly one document path")),
+        }
+        index += 1;
+    }
+    let path = path.ok_or_else(|| OfficeError::usage("a document path is required"))?;
+    let text = text.ok_or_else(|| OfficeError::usage("`--text <query>` is required"))?;
+    print_json(&office.search(Path::new(&path), &text, limit)?)
 }
 
 /// Parses `convert` options and hands one request to the library.
@@ -174,6 +203,7 @@ fn usage() {
          \x20 open-office inspect <file>\n\
          \x20 open-office stats <file>\n\
          \x20 open-office outline <file> [--points]\n\
+         \x20 open-office search <file> --text <query> [--limit <n>]\n\
          \x20 open-office formats\n\
          \x20 open-office convert <file> --format <format> --out <file> [--overwrite] [--pages <ranges>]\n\
          \x20 open-office convert <file>... --format <format> --out-dir <dir> [--overwrite]\n\
@@ -186,6 +216,7 @@ fn usage() {
          \x20 open-office stats report.docx\n\
          \x20 open-office outline report.docx\n\
          \x20 open-office outline deck.pptx --points\n\
+         \x20 open-office search report.docx --text invoice\n\
          \x20 open-office formats\n\
          \x20 open-office convert budget.xlsx --format pdf --out budget.pdf\n\
          \x20 open-office convert deck.pptx --format pdf --out deck.pdf\n\

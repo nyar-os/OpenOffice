@@ -154,7 +154,7 @@ impl Office {
     pub fn capabilities(&self) -> Value {
         json!({
             "engine": { "package": "open-office", "version": VERSION },
-            "commands": ["probe", "inspect", "convert", "formats", "stats", "outline", "capabilities", "version"],
+            "commands": ["probe", "inspect", "convert", "formats", "stats", "outline", "search", "capabilities", "version"],
             "modules": {
                 "word": open_word_document::capabilities(),
                 "excel": open_excel_workbook::capabilities(),
@@ -301,6 +301,57 @@ impl Office {
             "kind": kind.label(),
             "path": path.display().to_string(),
             "outline": outline,
+        }))
+    }
+
+    /// Searches the text one document owns and reports hits with stable locations.
+    ///
+    /// Matching is case-sensitive for every family so one query behaves the same
+    /// way across Word, Excel, Presentation and PDF. Word and Excel reuse the
+    /// engine's own `find`; a presentation walks slide text, table cells and
+    /// speaker notes; a PDF scans the extracted Markdown line by line because
+    /// page numbers are not tracked per hit.
+    pub fn search(&self, path: &Path, query: &str, limit: Option<u32>) -> Result<Value, OfficeError> {
+        if query.is_empty() {
+            return Err(OfficeError::usage("`--text` needs a non-empty query").with_code("invalid-query"));
+        }
+        let kind = Kind::of_path(path)?;
+        verify_container(path, kind)?;
+        let limit = limit.unwrap_or(100).clamp(1, 500) as usize;
+        let (hits, truncated, notes) = match kind {
+            Kind::Word => {
+                let opened = open_word_document::open(path).map_err(runtime)?;
+                let handle = handle_of(&opened)?;
+                let outcome = open_word_document::find(handle, query, Some(limit as u32));
+                let _ = open_word_document::close(handle);
+                let report = outcome.map_err(runtime)?;
+                let hits = report.as_array().cloned().unwrap_or_default();
+                let truncated = hits.len() >= limit;
+                (hits, truncated, Vec::new())
+            }
+            Kind::Excel => {
+                let opened = open_excel_workbook::open(path).map_err(runtime)?;
+                let handle = handle_of(&opened)?;
+                let outcome = open_excel_workbook::find(handle, &json!({ "query": query, "options": { "matchCase": true } }));
+                let _ = open_excel_workbook::close(handle);
+                let report = outcome.map_err(runtime)?;
+                let mut hits = report.get("hits").and_then(Value::as_array).cloned().unwrap_or_default();
+                let capped = report.get("truncated").and_then(Value::as_bool).unwrap_or(false);
+                let truncated = capped || hits.len() > limit;
+                hits.truncate(limit);
+                (hits, truncated, Vec::new())
+            }
+            Kind::Presentation => presentation_search(path, query, limit)?,
+            Kind::Pdf => pdf_search(path, query, limit)?,
+        };
+        Ok(json!({
+            "kind": kind.label(),
+            "path": path.display().to_string(),
+            "query": query,
+            "limit": limit,
+            "hits": hits,
+            "truncated": truncated,
+            "notes": notes,
         }))
     }
 
@@ -529,6 +580,149 @@ fn verify_container(path: &Path, kind: Kind) -> Result<(), OfficeError> {
         detection.evidence
     ))
     .with_code("container-mismatch"))
+}
+
+/// Finds one query in a presentation's slide text, tables and speaker notes.
+///
+/// The deck is serialized once and walked generically because the shared model
+/// keeps text in nested paragraph, run and cell nodes. Only string leaves under
+/// a `text` key are searched, so ids, colors and geometry never produce hits.
+fn presentation_search(path: &Path, query: &str, limit: usize) -> Result<(Vec<Value>, bool, Vec<Value>), OfficeError> {
+    let loaded = load_deck(path)?;
+    let document = serde_json::to_value(loaded.deck.document()).map_err(|error| OfficeError::runtime(error.to_string()))?;
+    Ok(presentation_hits(&document, query, limit))
+}
+
+/// Searches one serialized deck document and reports hit locations.
+fn presentation_hits(document: &Value, query: &str, limit: usize) -> (Vec<Value>, bool, Vec<Value>) {
+    let slides = document.get("slides").and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut hits = Vec::new();
+    'slides: for (index, slide) in slides.iter().enumerate() {
+        let slide_id = slide.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
+        if let Some(notes) = slide.get("notes").and_then(Value::as_str)
+            && !notes.is_empty()
+        {
+            for (start, end, matched) in match_spans(notes, query, limit - hits.len()) {
+                hits.push(json!({
+                    "slideId": slide_id,
+                    "slideIndex": index,
+                    "elementId": Value::Null,
+                    "source": "notes",
+                    "start": start,
+                    "end": end,
+                    "text": matched,
+                    "context": notes,
+                }));
+                if hits.len() >= limit {
+                    break 'slides;
+                }
+            }
+        }
+        let elements = slide.get("elements").and_then(Value::as_array).cloned().unwrap_or_default();
+        for element in &elements {
+            let element_id = element.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
+            let content = element.get("content");
+            let source = if content.and_then(|content| content.get("rows")).is_some() { "table" } else { "text" };
+            let mut texts = Vec::new();
+            collect_json_text(content, &mut texts);
+            for text in texts {
+                for (start, end, matched) in match_spans(&text, query, limit - hits.len()) {
+                    hits.push(json!({
+                        "slideId": slide_id,
+                        "slideIndex": index,
+                        "elementId": element_id,
+                        "source": source,
+                        "start": start,
+                        "end": end,
+                        "text": matched,
+                        "context": text,
+                    }));
+                    if hits.len() >= limit {
+                        break 'slides;
+                    }
+                }
+            }
+        }
+    }
+    let truncated = hits.len() >= limit;
+    let notes = vec![json!("presentations include slide text, table cells and speaker notes")];
+    (hits, truncated, notes)
+}
+
+/// Finds one query in a PDF's extracted Markdown, one hit per matching line.
+fn pdf_search(path: &Path, query: &str, limit: usize) -> Result<(Vec<Value>, bool, Vec<Value>), OfficeError> {
+    let report = open_pdf_core::extract_text(path).map_err(runtime)?;
+    let mut hits = Vec::new();
+    for (index, line) in report.markdown.lines().enumerate() {
+        if hits.len() >= limit {
+            break;
+        }
+        for (start, end, matched) in match_spans(line, query, limit - hits.len()) {
+            hits.push(json!({
+                "line": index + 1,
+                "start": start,
+                "end": end,
+                "text": matched,
+                "context": line,
+            }));
+        }
+    }
+    let truncated = hits.len() >= limit;
+    let mut notes = vec![json!("PDF page numbers are not tracked; `line` is a 1-based line in the extracted Markdown")];
+    if !report.losses.is_empty() {
+        notes.push(json!(format!(
+            "{} page(s) reported extraction losses, so hits only cover extractable text",
+            report.losses.len()
+        )));
+    }
+    Ok((hits, truncated, notes))
+}
+
+/// Collects every string held under a `text` key inside one content subtree.
+fn collect_json_text(value: Option<&Value>, out: &mut Vec<String>) {
+    match value {
+        Some(Value::Object(map)) => {
+            for (key, value) in map {
+                if key == "text" {
+                    if let Some(text) = value.as_str() {
+                        if !text.is_empty() {
+                            out.push(text.to_string());
+                        }
+                    }
+                    else {
+                        // Table cells wrap their paragraphs in a nested `text`
+                        // object, so recurse instead of treating it as a leaf.
+                        collect_json_text(Some(value), out);
+                    }
+                }
+                else {
+                    collect_json_text(Some(value), out);
+                }
+            }
+        }
+        Some(Value::Array(values)) => {
+            for value in values {
+                collect_json_text(Some(value), out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Returns character offsets and matched text for up to `limit` occurrences.
+fn match_spans(text: &str, query: &str, limit: usize) -> Vec<(usize, usize, String)> {
+    if query.is_empty() || limit == 0 {
+        return Vec::new();
+    }
+    let mut spans = Vec::new();
+    for (byte_start, matched) in text.match_indices(query) {
+        let start = text[..byte_start].chars().count();
+        spans.push((start, start + matched.chars().count(), matched.to_string()));
+        if spans.len() >= limit {
+            break;
+        }
+    }
+    spans
 }
 
 /// Stable container name used in probe reports.
@@ -1005,6 +1199,78 @@ mod tests {
         assert_eq!(report["outline"]["slides"][0]["title"], json!("Intro"));
         assert_eq!(report["outline"]["slides"][1]["title"], json!("Plan"));
         assert_eq!(report["outline"]["slides"][0]["points"], json!([]));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn match_spans_returns_character_offsets() {
+        assert_eq!(match_spans("标题和标题", "标题", 10), vec![(0, 2, "标题".to_owned()), (3, 5, "标题".to_owned())]);
+        assert_eq!(match_spans("aaaa", "aa", 1).len(), 1);
+        assert!(match_spans("text", "", 10).is_empty());
+        assert!(match_spans("text", "missing", 10).is_empty());
+    }
+
+    #[test]
+    fn collect_json_text_reads_only_text_leaves() {
+        let value = json!({
+            "paragraphs": [{ "runs": [{ "text": "Hello", "style": { "color": "#ff0000" } }] }],
+            "color": "#00ff00",
+            "cells": [{ "text": { "paragraphs": [{ "runs": [{ "text": "Cell" }] }] } }],
+        });
+        let mut texts = Vec::new();
+        collect_json_text(Some(&value), &mut texts);
+        texts.sort();
+        assert_eq!(texts, vec!["Cell".to_owned(), "Hello".to_owned()]);
+    }
+
+    #[test]
+    fn presentation_hits_cover_text_tables_and_notes() {
+        let document = json!({
+            "slides": [{
+                "id": "slide-1",
+                "notes": "Roadmap notes",
+                "elements": [
+                    { "id": "element-1", "content": { "paragraphs": [{ "runs": [{ "text": "Roadmap" }] }] } },
+                    {
+                        "id": "element-2",
+                        "content": {
+                            "rows": [{ "cells": [{ "text": { "paragraphs": [{ "runs": [{ "text": "Roadmap" }] }] } }] }],
+                        },
+                    },
+                ],
+            }],
+        });
+        let (hits, truncated, _) = presentation_hits(&document, "Roadmap", 10);
+        assert_eq!(hits.len(), 3);
+        assert_eq!(hits[0]["source"], json!("notes"));
+        assert_eq!(hits[1]["source"], json!("text"));
+        assert_eq!(hits[2]["source"], json!("table"));
+        assert!(!truncated);
+        let (limited, truncated, _) = presentation_hits(&document, "Roadmap", 1);
+        assert_eq!(limited.len(), 1);
+        assert!(truncated);
+    }
+
+    #[test]
+    fn search_finds_presentation_text_through_the_office_facade() {
+        let dir = std::env::temp_dir().join(format!("open-office-search-deck-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("temp dir");
+        let deck = open_ppt_deck::create(open_ppt_deck::CreateRequest {
+            title: Some("Search".to_owned()),
+            size: None,
+            theme: None,
+            slides: vec!["Roadmap".to_owned(), "Budget".to_owned()],
+        })
+        .expect("create");
+        let path = dir.join("search.project");
+        open_ppt_deck::save(&deck, &path, true).expect("save");
+
+        let report = Office::new().search(&path, "Roadmap", Some(10)).expect("search");
+        assert_eq!(report["kind"], json!("presentation"));
+        assert_eq!(report["query"], json!("Roadmap"));
+        assert!(!report["hits"].as_array().expect("hits").is_empty());
+        assert_eq!(report["hits"][0]["slideIndex"], json!(0));
+        assert_eq!(report["hits"][0]["text"], json!("Roadmap"));
         let _ = fs::remove_dir_all(&dir);
     }
 }

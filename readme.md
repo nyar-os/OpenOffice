@@ -61,6 +61,12 @@ open-office outline path/to/budget.xlsx
 open-office outline path/to/deck.pptx --points
 open-office outline path/to/paper.pdf
 
+# Search the text one document owns
+open-office search path/to/report.docx --text invoice
+open-office search path/to/budget.xlsx --text total --limit 20
+open-office search path/to/deck.pptx --text roadmap
+open-office search path/to/paper.pdf --text "conclusion"
+
 # Convert with an explicit target format
 open-office convert notes.md --format pdf --out notes.pdf
 open-office convert budget.xlsx --format csv --out budget.csv
@@ -78,6 +84,13 @@ targets the source engine cannot write and never overwrites without
 word documents, sheets for workbooks, slide titles (plus talking points with
 `--points`) for presentations, and outline bookmarks for PDFs. `--points` is
 refused for any other family instead of being silently ignored.
+
+`search` is case-sensitive for every family so one query behaves the same way
+across all four engines. Word and Excel reuse their native `find`; presentations
+search slide text, table cells and speaker notes; PDFs scan the extracted
+Markdown line by line, and the report notes that page numbers are not tracked
+per hit. Hits carry the engine's own location fields (`block_id`/`block_index`,
+`sheet`/`address`, `slideId`/`elementId`, or `line`) in a shared `hits` array.
 
 Supported conversion targets:
 
