@@ -50,10 +50,7 @@ fn run(arguments: &[String]) -> Result<(), OfficeError> {
             let path = positional(rest, "a document path is required")?;
             print_json(&office.inspect(Path::new(&path))?)
         }
-        "stats" => {
-            let path = positional(rest, "a document path is required")?;
-            print_json(&office.stats(Path::new(&path))?)
-        }
+        "stats" => stats(&office, rest),
         "outline" => outline(&office, rest),
         "search" => search(&office, rest),
         "render" => render(&office, rest),
@@ -64,6 +61,33 @@ fn run(arguments: &[String]) -> Result<(), OfficeError> {
         }
         other => Err(OfficeError::usage(format!("unknown command `{other}`"))),
     }
+}
+
+/// Parses `stats` paths and hands one or many requests to the library.
+///
+/// One path keeps the single-document envelope; more than one path returns a
+/// per-input batch report and exits non-zero when any input failed.
+fn stats(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
+    let mut paths = Vec::new();
+    for argument in arguments {
+        if argument.starts_with('-') {
+            return Err(OfficeError::usage(format!("unknown option `{argument}`")));
+        }
+        paths.push(PathBuf::from(argument));
+    }
+    if paths.is_empty() {
+        return Err(OfficeError::usage("a document path is required"));
+    }
+    if paths.len() == 1 {
+        return print_json(&office.stats(&paths[0])?);
+    }
+    let report = office.stats_many(&paths)?;
+    print_json(&report)?;
+    let failed = report.get("failed").and_then(Value::as_u64).unwrap_or_default();
+    if failed > 0 {
+        return Err(OfficeError::runtime(format!("{failed} of {} documents failed", paths.len())));
+    }
+    Ok(())
 }
 
 /// Parses `outline` options and hands one request to the library.
@@ -234,7 +258,7 @@ fn usage() {
          USAGE:\n\
          \x20 open-office probe <file>\n\
          \x20 open-office inspect <file>\n\
-         \x20 open-office stats <file>\n\
+         \x20 open-office stats <file>...\n\
          \x20 open-office outline <file> [--points]\n\
          \x20 open-office search <file> --text <query> [--limit <n>]\n\
          \x20 open-office render <file> [--sheet <name>] [--page <n>] [--out <file> | --out-dir <dir>] [--overwrite]\n\
@@ -248,6 +272,7 @@ fn usage() {
          \x20 open-office probe download.bin\n\
          \x20 open-office inspect report.docx\n\
          \x20 open-office stats report.docx\n\
+         \x20 open-office stats a.docx b.pdf c.xlsx\n\
          \x20 open-office outline report.docx\n\
          \x20 open-office outline deck.pptx --points\n\
          \x20 open-office search report.docx --text invoice\n\

@@ -17,7 +17,7 @@ open-office formats
 |---------|-------|-------|
 | `probe <file>` | none | Reads the bytes; does not route by extension and does not open the document. Aliases: `inspect-file`, `inspect_file`. |
 | `inspect <file>` | none | Dispatches to the owning engine. |
-| `stats <file>` | none | Lightweight per-family statistics. |
+| `stats <file>...` | none | Lightweight per-family statistics; one path returns the single envelope, more paths return a batch report. |
 | `outline <file>` | `--points` (optional) | `--points` is accepted only for presentations. |
 | `search <file>` | `--text <query>` / `-t` (required), `--limit <n>` (optional) | Case-sensitive in every family. Default limit is 100, clamped to 1-500. |
 | `render <file>` | `--sheet <name>` / `-s` (workbooks), `--page <n>` / `-p` (presentations), `--out <file>` / `-o`, `--out-dir <dir>`, `--overwrite` | SVG only. `--out` needs exactly one page; `--out-dir` writes `page-<n>.svg` per page. |
@@ -30,7 +30,7 @@ open-office formats
 
 Unknown options are usage errors. `convert` lowercases `--format`, and batch targets are written as `<out-dir>/<source-stem>.<format>`.
 
-Exit codes: `0` success, `2` usage error, `1` runtime error. A batch conversion prints its JSON report and then exits `1` when `failed` is greater than zero.
+Exit codes: `0` success, `2` usage error, `1` runtime error. A batch conversion or a multi-file `stats` prints its JSON report and then exits `1` when `failed` is greater than zero.
 
 ## Report envelopes
 
@@ -116,6 +116,23 @@ The envelope differs per family because each engine reports different facts:
 - `excel`: the workbook summary object.
 - `presentation`: the deck summary object plus `losses`.
 - `pdf`: only `pages`, `version` and `encrypted`.
+
+With more than one path, `stats` reports every input in order and does not stop
+at the first failure:
+
+```json
+{
+  "inspected": 1,
+  "failed": 1,
+  "results": [
+    { "source": "report.docx", "ok": true, "kind": "word", "stats": {} },
+    { "source": "missing.pdf", "ok": false, "code": "not-found", "error": "..." }
+  ]
+}
+```
+
+The batch form prints its JSON report and then exits `1` when `failed` is
+greater than zero.
 
 ### `outline`
 
