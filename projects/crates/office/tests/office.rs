@@ -192,7 +192,7 @@ fn inspect_many_reports_each_input_in_order() {
     fs::write(&source, b"# Title\n\nBody text.\n").expect("write markdown");
 
     let inputs = vec![source.clone(), PathBuf::from("missing-inspect.docx")];
-    let report = office.inspect_many(&inputs).expect("inspect batch");
+    let report = office.inspect_many(&inputs, None).expect("inspect batch");
     assert_eq!(report["inspected"], json!(1));
     assert_eq!(report["failed"], json!(1));
     let results = report["results"].as_array().expect("results array");
@@ -205,7 +205,31 @@ fn inspect_many_reports_each_input_in_order() {
     assert_eq!(results[1]["ok"], json!(false));
     assert_eq!(results[1]["code"], json!("not-found"));
 
-    assert!(office.inspect_many(&[]).expect_err("empty inputs").is_usage());
+    assert!(office.inspect_many(&[], None).expect_err("empty inputs").is_usage());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn inspect_applies_requested_checks_to_presentations() {
+    let dir = std::env::temp_dir().join(format!("open-office-inspect-checks-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let deck = open_ppt_deck::create(open_ppt_deck::CreateRequest {
+        title: Some("Checks".to_owned()),
+        size: None,
+        theme: None,
+        slides: vec!["Intro".to_owned()],
+    })
+    .expect("create deck");
+    let path = dir.join("checks.project");
+    open_ppt_deck::save(&deck, &path, true).expect("save deck");
+
+    let report = Office::new().inspect(&path, Some(&["contrast".to_owned()])).expect("inspect deck");
+    assert_eq!(report["checks"], json!(["contrast"]));
+    assert!(report["inspect"]["issues"].is_array(), "presentations expose rule-check findings");
+
+    let error = Office::new().inspect(&path, Some(&["no-such-check".to_owned()])).expect_err("unknown check");
+    assert!(error.message().contains("unknown check"), "unexpected error: {}", error.message());
+
     let _ = fs::remove_dir_all(&dir);
 }
 

@@ -17,7 +17,7 @@ open-office formats
 |---------|-------|-------|
 | `open <file>` | `--print` | Routes by extension and opens the file with the platform viewer: `cmd /C start` on Windows, `open` on macOS, `xdg-open` elsewhere. `--print` reports `{ kind, path, opener, opened: false }` without launching anything; use it on headless hosts and in tests. The suite ships no viewer of its own. |
 | `probe <file>...` | none | Reads the bytes; does not route by extension and does not open the document. One path returns the single envelope, more paths return a batch report. Aliases: `inspect-file`, `inspect_file`. |
-| `inspect <file>...` | none | Dispatches to the owning engine; one path returns the single envelope, more paths return a batch report. |
+| `inspect <file>...` | `--checks <list>` (optional) | Dispatches to the owning engine; one path returns the single envelope, more paths return a batch report. `--checks` is a comma-separated list of rule-check names and applies to Word, Excel and presentation inputs. |
 | `stats <file>...` | none | Lightweight per-family statistics; one path returns the single envelope, more paths return a batch report. |
 | `outline <file>...` | `--points` (presentations), `--depth <n>` (word and PDF) | `--points` is accepted only for presentations. `--depth` keeps word headings and PDF bookmarks at that level or shallower and is rejected for other families. One path returns the single envelope, more paths return a batch report. |
 | `search <file>...` | `--text <query>` / `-t` (required), `--limit <n>` (optional) | Case-sensitive in every family. Default limit is 100, clamped to 1-500. One path returns the single envelope, more paths return a batch report. |
@@ -104,15 +104,16 @@ The envelope differs per family because each engine reports different facts:
 
 | Family | Top-level keys |
 |--------|----------------|
-| `word` | `kind`, `path`, `summary`, `stats`, `inspect` |
-| `excel` | `kind`, `path`, `summary`, `inspect` |
-| `presentation` | `kind`, `path`, `summary`, `losses` |
-| `pdf` | `kind`, `path`, `inspect` |
+| `word` | `kind`, `path`, `checks`, `summary`, `stats`, `inspect` |
+| `excel` | `kind`, `path`, `checks`, `summary`, `inspect` |
+| `presentation` | `kind`, `path`, `checks`, `summary`, `losses`, `inspect` |
+| `pdf` | `kind`, `path`, `checks`, `inspect` |
 
+- `checks` echoes the requested check names, or `null` when every check ran.
 - Word `summary` and `stats` are the document summary and statistics. `inspect` is the rule-check report.
 - Excel `summary` is the workbook summary; `inspect` is the rule-check report.
-- Presentation `summary` is the deck summary; `losses` lists what the PPTX import could not preserve.
-- PDF `inspect` is the PDF engine report: `label`, `version`, `pages`, `encrypted`, `metadata`, `pageSizes`, `bookmarks`, `formFields`, `warnings`. Encrypted documents are rejected before inspection, so `encrypted` is `false` on a successful report.
+- Presentation `summary` is the deck summary; `losses` lists what the PPTX import could not preserve; `inspect` is the deck rule-check report.
+- PDF `inspect` is the PDF engine report: `label`, `version`, `pages`, `encrypted`, `metadata`, `pageSizes`, `bookmarks`, `formFields`, `warnings`. Encrypted documents are rejected before inspection, so `encrypted` is `false` on a successful report. PDF has no selectable checks, so `--checks` on a PDF is a usage error.
 
 ### `stats`
 
@@ -292,7 +293,7 @@ Codes are exposed to library callers and in batch `results[].code`. The CLI itse
 | `container-mismatch` | The bytes contradict the extension route, for example a PDF renamed to `.xlsx` or plain text renamed to `.pdf`. |
 | `unsupported-target` | `--format` is not one of the export targets the source family wires. |
 | `target-exists` | The output exists and `--overwrite` was not passed. |
-| `unsupported-option` | `--points` for a non-presentation, or `--pages` for a non-PDF. |
+| `unsupported-option` | `--points` for a non-presentation, `--pages` for a non-PDF, or `--checks` on a PDF. |
 | `invalid-query` | `--text` was empty. |
 | `invalid-pages` | A page range is empty, malformed, zero, reversed, duplicated or beyond the page count. |
 | `conversion-failed` | The owning engine failed while exporting or extracting. |
@@ -321,6 +322,7 @@ After routing, `inspect`, `stats`, `outline`, `search`, `render` and `convert` r
 - Do not rename a file to force a route. The byte check will reject a mismatched container.
 - `--overwrite` is required to replace an existing output. There is no implicit replacement.
 - `--points` applies to presentations only.
+- `inspect --checks` names come from the owning engine's `checks` map in `capabilities`; an unknown name fails that input. PDF has no selectable checks.
 - `render` writes SVG only; `--sheet` is workbook-only and `--page` is presentation-only. `--out` needs a single selected page, while `--out-dir` writes every selected page. A batch needs `--out-dir` and writes one subdirectory per source stem.
 - `--pages` applies to single-input PDF text conversion only; it cannot be combined with multiple inputs.
 - Search is case-sensitive everywhere. A query that works in one family will not silently become case-insensitive in another.

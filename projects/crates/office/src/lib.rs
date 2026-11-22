@@ -730,20 +730,30 @@ impl Office {
     }
 
     /// Inspects a document by dispatching to the owning engine.
-    pub fn inspect(&self, path: &Path) -> Result<Value, OfficeError> {
+    ///
+    /// `checks` limits the rule checks Word, Excel and presentation engines
+    /// run; `None` runs every check they support. PDF inspection has no
+    /// selectable checks, so a non-empty `checks` list is a usage error there.
+    pub fn inspect(&self, path: &Path, checks: Option<&[String]>) -> Result<Value, OfficeError> {
         let kind = Kind::of_path(path)?;
         verify_container(path, kind)?;
+        let selected = checks.filter(|names| !names.is_empty());
+        if selected.is_some() && kind == Kind::Pdf {
+            return Err(OfficeError::usage("PDF files have no inspection rule checks; omit `--checks`")
+                .with_code("unsupported-option"));
+        }
         match kind {
             Kind::Word => {
                 let opened = open_word_document::open(path).map_err(runtime)?;
                 let handle = handle_of(&opened)?;
                 let summary = open_word_document::summary(handle).map_err(runtime)?;
                 let stats = open_word_document::stats(handle).map_err(runtime)?;
-                let report = open_word_document::inspect(handle, None).map_err(runtime)?;
+                let report = open_word_document::inspect(handle, selected.map(<[String]>::to_vec)).map_err(runtime)?;
                 let _ = open_word_document::close(handle);
                 Ok(json!({
                     "kind": kind.label(),
                     "path": path.display().to_string(),
+                    "checks": selected,
                     "summary": summary,
                     "stats": stats,
                     "inspect": report,
@@ -753,11 +763,12 @@ impl Office {
                 let opened = open_excel_workbook::open(path).map_err(runtime)?;
                 let handle = handle_of(&opened)?;
                 let summary = open_excel_workbook::summary(handle).map_err(runtime)?;
-                let report = open_excel_workbook::inspect(handle, None).map_err(runtime)?;
+                let report = open_excel_workbook::inspect(handle, selected.map(<[String]>::to_vec)).map_err(runtime)?;
                 let _ = open_excel_workbook::close(handle);
                 Ok(json!({
                     "kind": kind.label(),
                     "path": path.display().to_string(),
+                    "checks": selected,
                     "summary": summary,
                     "inspect": report,
                 }))
@@ -765,11 +776,18 @@ impl Office {
             Kind::Presentation => {
                 let loaded = load_deck(path)?;
                 let summary = open_ppt_deck::summary(&loaded.deck);
+                let parsed = match selected {
+                    Some(names) => Some(open_ppt_deck::parse_checks(&names.join(",")).map_err(runtime)?),
+                    None => None,
+                };
+                let report = open_ppt_deck::inspect(&loaded.deck, parsed);
                 Ok(json!({
                     "kind": kind.label(),
                     "path": path.display().to_string(),
+                    "checks": selected,
                     "summary": summary,
                     "losses": loaded.losses,
+                    "inspect": report,
                 }))
             }
             Kind::Pdf => {
@@ -778,6 +796,7 @@ impl Office {
                 Ok(json!({
                     "kind": kind.label(),
                     "path": path.display().to_string(),
+                    "checks": selected,
                     "inspect": report,
                 }))
             }
@@ -960,7 +979,7 @@ impl Office {
     ///
     /// A failing document does not stop the batch: each entry carries `ok` and
     /// either the full inspect report or the stable `code` and `error` message.
-    pub fn inspect_many(&self, inputs: &[PathBuf]) -> Result<Value, OfficeError> {
+    pub fn inspect_many(&self, inputs: &[PathBuf], checks: Option<&[String]>) -> Result<Value, OfficeError> {
         if inputs.is_empty() {
             return Err(OfficeError::usage("at least one document is required"));
         }
@@ -968,7 +987,7 @@ impl Office {
         let mut failed = 0;
         let mut results = Vec::with_capacity(inputs.len());
         for input in inputs {
-            match self.inspect(input) {
+            match self.inspect(input, checks) {
                 Ok(report) => {
                     inspected += 1;
                     results.push(json!({

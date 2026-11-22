@@ -99,11 +99,44 @@ fn stats(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
 /// One path keeps the single-document envelope; more than one path returns a
 /// per-input batch report and exits non-zero when any input failed.
 fn inspect(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
-    let paths = document_paths(arguments, "a document path is required")?;
-    if paths.len() == 1 {
-        return print_json(&office.inspect(&paths[0])?);
+    let mut checks: Option<Vec<String>> = None;
+    let mut paths = Vec::new();
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--checks" => {
+                let value = arguments
+                    .get(index + 1)
+                    .ok_or_else(|| OfficeError::usage("`--checks` needs a comma-separated list of check names"))?;
+                let names = value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>();
+                if names.is_empty() {
+                    return Err(OfficeError::usage("`--checks` needs at least one check name"));
+                }
+                checks = Some(names);
+                index += 2;
+            }
+            option if option.starts_with('-') => {
+                return Err(OfficeError::usage(format!("unknown option `{option}`")));
+            }
+            path => {
+                paths.push(PathBuf::from(path));
+                index += 1;
+            }
+        }
     }
-    let report = office.inspect_many(&paths)?;
+    if paths.is_empty() {
+        return Err(OfficeError::usage("a document path is required"));
+    }
+    let checks = checks.as_deref();
+    if paths.len() == 1 {
+        return print_json(&office.inspect(&paths[0], checks)?);
+    }
+    let report = office.inspect_many(&paths, checks)?;
     print_json(&report)?;
     let failed = report.get("failed").and_then(Value::as_u64).unwrap_or_default();
     if failed > 0 {
@@ -360,7 +393,7 @@ fn usage() {
          \n\
          USAGE:\n\
          \x20 open-office probe <file>...\n\
-         \x20 open-office inspect <file>...\n\
+         \x20 open-office inspect <file>... [--checks <list>]\n\
          \x20 open-office stats <file>...\n\
          \x20 open-office outline <file>... [--points] [--depth <n>]\n\
          \x20 open-office search <file>... --text <query> [--limit <n>]\n\
