@@ -319,11 +319,19 @@ impl Office {
     /// nests its sections by heading level, a workbook lists its sheets, a
     /// presentation lists its slides (and, with `points`, their talking points),
     /// and a PDF reports its outline bookmarks. `points` is refused for families
-    /// that have no talking points instead of being silently ignored.
-    pub fn outline(&self, path: &Path, points: bool) -> Result<Value, OfficeError> {
+    /// that have no talking points instead of being silently ignored. `depth`
+    /// keeps only word headings and PDF bookmarks at that level or shallower;
+    /// families without levels refuse the option.
+    pub fn outline(&self, path: &Path, points: bool, depth: Option<u8>) -> Result<Value, OfficeError> {
         let kind = Kind::of_path(path)?;
         if points && kind != Kind::Presentation {
             return Err(OfficeError::usage("`--points` only applies to presentations").with_code("unsupported-option"));
+        }
+        if depth.is_some() && !matches!(kind, Kind::Word | Kind::Pdf) {
+            return Err(OfficeError::usage("`--depth` only applies to word documents and PDFs").with_code("unsupported-option"));
+        }
+        if depth == Some(0) {
+            return Err(OfficeError::usage("`--depth` needs a positive integer").with_code("invalid-depth"));
         }
         verify_container(path, kind)?;
         let outline = match kind {
@@ -332,7 +340,13 @@ impl Office {
                 let handle = handle_of(&opened)?;
                 let outcome = open_word_document::outline(handle);
                 let _ = open_word_document::close(handle);
-                outcome.map_err(runtime)?
+                let mut outline = outcome.map_err(runtime)?;
+                if let Some(depth) = depth
+                    && let Some(items) = outline.get_mut("items")
+                {
+                    trim_outline_items(items, depth);
+                }
+                outline
             }
             Kind::Excel => {
                 let opened = open_excel_workbook::open(path).map_err(runtime)?;
@@ -351,11 +365,14 @@ impl Office {
             }
             Kind::Pdf => {
                 let report = open_pdf_core::inspect(path).map_err(runtime)?;
-                json!({
-                    "pages": report.pages,
-                    "bookmarks": serde_json::to_value(&report.bookmarks)
-                        .map_err(|error| OfficeError::runtime(error.to_string()))?,
-                })
+                let mut bookmarks = serde_json::to_value(&report.bookmarks)
+                    .map_err(|error| OfficeError::runtime(error.to_string()))?;
+                if let Some(depth) = depth
+                    && let Some(entries) = bookmarks.as_array_mut()
+                {
+                    entries.retain(|entry| entry.get("depth").and_then(Value::as_u64).is_some_and(|value| value <= depth as u64));
+                }
+                json!({ "pages": report.pages, "bookmarks": bookmarks })
             }
         };
         Ok(json!({
@@ -371,7 +388,7 @@ impl Office {
     /// either the family `kind`/`outline` or the stable `code` and `error`.
     /// `points` applies to presentations only and fails other families the same
     /// way single-document [`Office::outline`] does.
-    pub fn outline_many(&self, inputs: &[PathBuf], points: bool) -> Result<Value, OfficeError> {
+    pub fn outline_many(&self, inputs: &[PathBuf], points: bool, depth: Option<u8>) -> Result<Value, OfficeError> {
         if inputs.is_empty() {
             return Err(OfficeError::usage("at least one document is required"));
         }
@@ -379,7 +396,7 @@ impl Office {
         let mut failed = 0;
         let mut results = Vec::with_capacity(inputs.len());
         for input in inputs {
-            match self.outline(input, points) {
+            match self.outline(input, points, depth) {
                 Ok(report) => {
                     outlined += 1;
                     results.push(json!({
@@ -857,6 +874,23 @@ impl Office {
             }
         }
         Ok(json!({ "inspected": inspected, "failed": failed, "results": results }))
+    }
+}
+
+/// Drops outline items deeper than `depth` and prunes their descendants.
+///
+/// Word outlines nest by heading level, so a shallow depth keeps the top of
+/// the tree and removes every deeper heading together with its children.
+fn trim_outline_items(items: &mut Value, depth: u8) {
+    let Some(entries) = items.as_array_mut()
+    else {
+        return;
+    };
+    entries.retain(|entry| entry.get("level").and_then(Value::as_u64).is_none_or(|level| level <= depth as u64));
+    for entry in entries.iter_mut() {
+        if let Some(children) = entry.get_mut("children") {
+            trim_outline_items(children, depth);
+        }
     }
 }
 

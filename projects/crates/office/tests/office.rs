@@ -77,7 +77,7 @@ fn outline_many_reports_each_input_in_order() {
     fs::write(&source, b"# Title\n\n## Child\n\nBody.\n").expect("write markdown");
 
     let inputs = vec![source.clone(), PathBuf::from("missing-outline.docx")];
-    let report = office.outline_many(&inputs, false).expect("outline batch");
+    let report = office.outline_many(&inputs, false, None).expect("outline batch");
     assert_eq!(report["outlined"], json!(1));
     assert_eq!(report["failed"], json!(1));
     let results = report["results"].as_array().expect("results array");
@@ -90,12 +90,19 @@ fn outline_many_reports_each_input_in_order() {
     assert_eq!(results[1]["ok"], json!(false));
     assert_eq!(results[1]["code"], json!("not-found"));
 
-    let points = office.outline_many(std::slice::from_ref(&source), true).expect("points batch");
+    let points = office.outline_many(std::slice::from_ref(&source), true, None).expect("points batch");
     assert_eq!(points["outlined"], json!(0));
     assert_eq!(points["failed"], json!(1));
     assert_eq!(points["results"][0]["code"], json!("unsupported-option"));
 
-    assert!(office.outline_many(&[], false).expect_err("empty inputs").is_usage());
+    let shallow = office.outline(&source, false, Some(1)).expect("shallow outline");
+    let items = shallow["outline"]["items"].as_array().expect("items");
+    assert_eq!(items.len(), 1, "only the top heading survives: {shallow}");
+    assert_eq!(items[0]["title"], json!("Title"));
+    assert!(items[0]["children"].as_array().expect("children").is_empty());
+
+    assert!(office.outline_many(&[], false, None).expect_err("empty inputs").is_usage());
+    assert!(office.outline(&source, false, Some(0)).expect_err("zero depth").is_usage());
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -413,7 +420,7 @@ fn outline_nests_word_headings() {
     open_word_document::save(handle, &path, true).expect("save");
     let _ = open_word_document::close(handle);
 
-    let report = Office::new().outline(&path, false).expect("outline");
+    let report = Office::new().outline(&path, false, None).expect("outline");
     assert_eq!(report["kind"], json!("word"));
     assert_eq!(report["outline"]["items"][0]["title"], json!("Overview"));
     assert_eq!(report["outline"]["items"][0]["children"][0]["title"], json!("Details"));
@@ -431,13 +438,15 @@ fn outline_lists_workbook_sheets_and_refuses_points() {
     let _ = open_excel_workbook::close(handle);
 
     let office = Office::new();
-    let report = office.outline(&path, false).expect("outline");
+    let report = office.outline(&path, false, None).expect("outline");
     assert_eq!(report["kind"], json!("excel"));
     assert_eq!(report["outline"]["sheets"][0]["name"], json!("Sheet1"));
 
-    let error = office.outline(&path, true).expect_err("points are presentations only");
+    let error = office.outline(&path, true, None).expect_err("points are presentations only");
     assert_eq!(error.code(), "unsupported-option");
     assert!(error.is_usage());
+    let depth = office.outline(&path, false, Some(1)).expect_err("depth needs levels");
+    assert_eq!(depth.code(), "unsupported-option");
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -457,12 +466,16 @@ fn outline_reads_pdf_bookmarks() {
     )
     .expect("bookmarks");
 
-    let report = Office::new().outline(&marked, false).expect("outline");
+    let report = Office::new().outline(&marked, false, None).expect("outline");
     assert_eq!(report["kind"], json!("pdf"));
     assert_eq!(report["outline"]["pages"], json!(2));
     assert_eq!(report["outline"]["bookmarks"][0]["title"], json!("Top"));
     assert_eq!(report["outline"]["bookmarks"][0]["depth"], json!(1));
     assert_eq!(report["outline"]["bookmarks"][1]["depth"], json!(2));
+
+    let shallow = Office::new().outline(&marked, false, Some(1)).expect("shallow bookmarks");
+    assert_eq!(shallow["outline"]["bookmarks"].as_array().expect("bookmarks").len(), 1);
+    assert_eq!(shallow["outline"]["bookmarks"][0]["title"], json!("Top"));
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -480,7 +493,7 @@ fn outline_lists_presentation_slides_with_points() {
     let path = dir.join("outline.project");
     open_ppt_deck::save(&deck, &path, true).expect("save");
 
-    let report = Office::new().outline(&path, true).expect("outline");
+    let report = Office::new().outline(&path, true, None).expect("outline");
     assert_eq!(report["kind"], json!("presentation"));
     assert_eq!(report["outline"]["slides"][0]["title"], json!("Intro"));
     assert_eq!(report["outline"]["slides"][1]["title"], json!("Plan"));

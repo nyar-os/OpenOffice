@@ -18,7 +18,7 @@ open-office formats
 | `probe <file>...` | none | Reads the bytes; does not route by extension and does not open the document. One path returns the single envelope, more paths return a batch report. Aliases: `inspect-file`, `inspect_file`. |
 | `inspect <file>...` | none | Dispatches to the owning engine; one path returns the single envelope, more paths return a batch report. |
 | `stats <file>...` | none | Lightweight per-family statistics; one path returns the single envelope, more paths return a batch report. |
-| `outline <file>...` | `--points` (optional) | `--points` is accepted only for presentations. One path returns the single envelope, more paths return a batch report. |
+| `outline <file>...` | `--points` (presentations), `--depth <n>` (word and PDF) | `--points` is accepted only for presentations. `--depth` keeps word headings and PDF bookmarks at that level or shallower and is rejected for other families. One path returns the single envelope, more paths return a batch report. |
 | `search <file>...` | `--text <query>` / `-t` (required), `--limit <n>` (optional) | Case-sensitive in every family. Default limit is 100, clamped to 1-500. One path returns the single envelope, more paths return a batch report. |
 | `render <file>` | `--sheet <name>` / `-s` (workbooks), `--page <n>` / `-p` (presentations), `--out <file>` / `-o`, `--out-dir <dir>`, `--overwrite` | SVG only. `--out` needs exactly one page; `--out-dir` writes `page-<n>.svg` per page. |
 | `formats` | none | Import and export matrix. |
@@ -171,6 +171,8 @@ exits `1` when `failed` is greater than zero.
 | `pdf` | `pages`, `bookmarks`; each bookmark has `title`, `page`, `depth` |
 
 Presentation outlines always include a `points` array, derived from the slide body text and capped by the deck engine; a slide without body text reports an empty array. `--points` is accepted for presentations and is a usage error for every other family.
+
+`--depth <n>` keeps word headings and PDF bookmarks whose level or depth is `n` or shallower; deeper entries and their descendants are dropped. Workbooks and presentations reject it as a usage error.
 
 ### `search`
 
