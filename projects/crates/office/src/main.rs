@@ -118,6 +118,7 @@ fn render(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
     let mut sheet = None;
     let mut page = None;
     let mut out = None;
+    let mut out_dir = None;
     let mut overwrite = false;
     let mut index = 0;
     while index < arguments.len() {
@@ -128,6 +129,7 @@ fn render(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
                 page = Some(value.parse::<u32>().map_err(|_| OfficeError::usage("`--page` needs a positive integer"))?);
             }
             "--out" | "-o" => out = Some(PathBuf::from(value_of(arguments, &mut index, "--out")?)),
+            "--out-dir" => out_dir = Some(PathBuf::from(value_of(arguments, &mut index, "--out-dir")?)),
             "--overwrite" => overwrite = true,
             value if value.starts_with('-') => {
                 return Err(OfficeError::usage(format!("unknown option `{value}`")));
@@ -138,7 +140,7 @@ fn render(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
         index += 1;
     }
     let path = path.ok_or_else(|| OfficeError::usage("a document path is required"))?;
-    let options = RenderOptions { sheet, page, out, overwrite };
+    let options = RenderOptions { sheet, page, out, out_dir, overwrite };
     print_json(&office.render(Path::new(&path), &options)?)
 }
 
@@ -235,7 +237,7 @@ fn usage() {
          \x20 open-office stats <file>\n\
          \x20 open-office outline <file> [--points]\n\
          \x20 open-office search <file> --text <query> [--limit <n>]\n\
-         \x20 open-office render <file> [--sheet <name>] [--page <n>] [--out <file>] [--overwrite]\n\
+         \x20 open-office render <file> [--sheet <name>] [--page <n>] [--out <file> | --out-dir <dir>] [--overwrite]\n\
          \x20 open-office formats\n\
          \x20 open-office convert <file> --format <format> --out <file> [--overwrite] [--pages <ranges>]\n\
          \x20 open-office convert <file>... --format <format> --out-dir <dir> [--overwrite]\n\
@@ -251,6 +253,7 @@ fn usage() {
          \x20 open-office search report.docx --text invoice\n\
          \x20 open-office render budget.xlsx --out sheet.svg\n\
          \x20 open-office render deck.pptx --page 2 --out slide-2.svg\n\
+         \x20 open-office render deck.pptx --out-dir preview/\n\
          \x20 open-office formats\n\
          \x20 open-office convert budget.xlsx --format pdf --out budget.pdf\n\
          \x20 open-office convert deck.pptx --format pdf --out deck.pdf\n\

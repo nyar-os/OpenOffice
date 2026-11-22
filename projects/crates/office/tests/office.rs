@@ -470,6 +470,31 @@ fn render_lists_presentation_pages_and_selects_one() {
         office.render(&path, &RenderOptions { out: Some(out), ..RenderOptions::default() }).expect_err("ambiguous out");
     assert_eq!(error.code(), "multiple-pages");
 
+    let preview = dir.join("preview");
+    let written =
+        office.render(&path, &RenderOptions { out_dir: Some(preview.clone()), ..RenderOptions::default() }).expect("dir");
+    assert_eq!(written["written"].as_array().expect("written").len(), 2);
+    assert!(preview.join("page-1.svg").exists());
+    assert!(preview.join("page-2.svg").exists());
+    assert!(fs::read_to_string(preview.join("page-2.svg")).expect("page two").starts_with("<svg"));
+
+    let error = office
+        .render(&path, &RenderOptions { out_dir: Some(preview), ..RenderOptions::default() })
+        .expect_err("existing pages");
+    assert_eq!(error.code(), "target-exists");
+
+    let error = office
+        .render(
+            &path,
+            &RenderOptions {
+                out: Some(dir.join("x.svg")),
+                out_dir: Some(dir.join("y")),
+                ..RenderOptions::default()
+            },
+        )
+        .expect_err("mutually exclusive");
+    assert_eq!(error.code(), "unsupported-option");
+
     let error = office.render(&path, &RenderOptions { sheet: Some("Sheet1".to_owned()), ..RenderOptions::default() })
         .expect_err("sheet is for workbooks");
     assert_eq!(error.code(), "unsupported-option");

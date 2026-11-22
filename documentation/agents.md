@@ -20,7 +20,7 @@ open-office formats
 | `stats <file>` | none | Lightweight per-family statistics. |
 | `outline <file>` | `--points` (optional) | `--points` is accepted only for presentations. |
 | `search <file>` | `--text <query>` / `-t` (required), `--limit <n>` (optional) | Case-sensitive in every family. Default limit is 100, clamped to 1-500. |
-| `render <file>` | `--sheet <name>` / `-s` (workbooks), `--page <n>` / `-p` (presentations), `--out <file>` / `-o`, `--overwrite` | SVG only. `--out` needs exactly one page. |
+| `render <file>` | `--sheet <name>` / `-s` (workbooks), `--page <n>` / `-p` (presentations), `--out <file>` / `-o`, `--out-dir <dir>`, `--overwrite` | SVG only. `--out` needs exactly one page; `--out-dir` writes `page-<n>.svg` per page. |
 | `formats` | none | Import and export matrix. |
 | `capabilities` | none | Capability matrix. |
 | `convert <file>` | `--format <f>` / `-f` (required), `--out <file>` / `-o` (required), `--overwrite`, `--pages <ranges>` | Single-input form. `--pages` is PDF-only. |
@@ -168,6 +168,8 @@ For Word hits, `path` is the enclosing section address or `null`. Offsets are ch
   "format": "svg",
   "revision": 3,
   "out": null,
+  "outDir": null,
+  "written": [],
   "totalPages": 2,
   "pages": [
     { "slideId": "slide-1", "index": 0, "widthPx": 960, "heightPx": 540, "svg": "<svg …" }
@@ -176,7 +178,7 @@ For Word hits, `path` is the enclosing section address or `null`. Offsets are ch
 }
 ```
 
-A workbook yields exactly one page for the selected sheet (`sheet`, `sheetId`, `svg`); a presentation yields one page per slide. `--page` is one-based, selects a single presentation page and is refused for workbooks; `--sheet` is refused for presentations. `--out` writes the single selected SVG and fails with `multiple-pages` when the selection has more than one page, and with `target-exists` unless `--overwrite` is passed. Word and PDF are refused with `unsupported-target` because neither bundled engine exposes an SVG renderer in this build.
+A workbook yields exactly one page for the selected sheet (`sheet`, `sheetId`, `svg`); a presentation yields one page per slide. `--page` is one-based, selects a single presentation page and is refused for workbooks; `--sheet` is refused for presentations. `--out` writes the single selected SVG and fails with `multiple-pages` when the selection has more than one page; `--out-dir` writes every selected page as `page-<n>.svg`, numbered from the one-based page index. Both refuse existing targets unless `--overwrite` is passed and cannot be combined. Word and PDF are refused with `unsupported-target` because neither bundled engine exposes an SVG renderer in this build.
 
 ### `convert` (single input)
 
@@ -252,7 +254,7 @@ After routing, `inspect`, `stats`, `outline`, `search`, `render` and `convert` r
 - Do not rename a file to force a route. The byte check will reject a mismatched container.
 - `--overwrite` is required to replace an existing output. There is no implicit replacement.
 - `--points` applies to presentations only.
-- `render` writes SVG only; `--sheet` is workbook-only and `--page` is presentation-only. `--out` needs a single selected page.
+- `render` writes SVG only; `--sheet` is workbook-only and `--page` is presentation-only. `--out` needs a single selected page, while `--out-dir` writes every selected page.
 - `--pages` applies to single-input PDF text conversion only; it cannot be combined with multiple inputs.
 - Search is case-sensitive everywhere. A query that works in one family will not silently become case-insensitive in another.
 - PDF search reports lines in extracted Markdown, not PDF pages.

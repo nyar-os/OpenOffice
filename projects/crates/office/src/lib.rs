@@ -151,7 +151,9 @@ pub struct RenderOptions {
     pub page: Option<u32>,
     /// Writes the selected SVG here instead of only reporting it.
     pub out: Option<PathBuf>,
-    /// Replaces `out` when it already exists.
+    /// Writes every selected page as `page-<n>.svg` into this directory.
+    pub out_dir: Option<PathBuf>,
+    /// Replaces existing `out` or `out_dir` files.
     pub overwrite: bool,
 }
 
@@ -375,9 +377,10 @@ impl Office {
     /// The page list always comes from the owning engine: a workbook yields one
     /// page for the selected sheet, a presentation yields one page per slide.
     /// `page` selects a one-based presentation page and is refused for
-    /// workbooks; `out` writes the single selected SVG and needs `overwrite`
-    /// when the file already exists. Word and PDF files are refused because
-    /// neither engine exposes an SVG renderer in this build.
+    /// workbooks; `out` writes the single selected SVG, `out_dir` writes every
+    /// selected page as `page-<n>.svg`, and both need `overwrite` when a target
+    /// already exists. Word and PDF files are refused because neither engine
+    /// exposes an SVG renderer in this build.
     pub fn render(&self, path: &Path, options: &RenderOptions) -> Result<Value, OfficeError> {
         let kind = Kind::of_path(path)?;
         verify_container(path, kind)?;
@@ -432,6 +435,10 @@ impl Office {
                 .with_code("unsupported-target"));
             }
         };
+        if options.out.is_some() && options.out_dir.is_some() {
+            return Err(OfficeError::usage("`--out` and `--out-dir` are mutually exclusive").with_code("unsupported-option"));
+        }
+        let mut written: Vec<String> = Vec::new();
         if let Some(out) = &options.out {
             if pages.len() != 1 {
                 return Err(OfficeError::usage(
@@ -439,20 +446,19 @@ impl Office {
                 )
                 .with_code("multiple-pages"));
             }
-            if out.exists() && !options.overwrite {
-                return Err(OfficeError::runtime(format!(
-                    "{} already exists; pass --overwrite to replace it",
-                    out.display()
-                ))
-                .with_code("target-exists"));
-            }
-            let svg = pages[0]
-                .get("svg")
-                .and_then(Value::as_str)
-                .ok_or_else(|| OfficeError::runtime("the engine returned no SVG for this page"))?;
-            fs::write(out, svg).map_err(|error| {
-                OfficeError::runtime(format!("cannot write {}: {error}", out.display())).with_code("unwritable")
+            write_svg(out, &pages[0], options.overwrite)?;
+            written.push(out.display().to_string());
+        }
+        if let Some(dir) = &options.out_dir {
+            fs::create_dir_all(dir).map_err(|error| {
+                OfficeError::runtime(format!("cannot create {}: {error}", dir.display())).with_code("unwritable")
             })?;
+            for (offset, page) in pages.iter().enumerate() {
+                let number = page.get("index").and_then(Value::as_u64).unwrap_or(offset as u64) + 1;
+                let out = dir.join(format!("page-{number}.svg"));
+                write_svg(&out, page, options.overwrite)?;
+                written.push(out.display().to_string());
+            }
         }
         Ok(json!({
             "kind": kind.label(),
@@ -460,6 +466,8 @@ impl Office {
             "format": "svg",
             "revision": revision,
             "out": options.out.as_ref().map(|path| path.display().to_string()),
+            "outDir": options.out_dir.as_ref().map(|path| path.display().to_string()),
+            "written": written,
             "totalPages": total,
             "pages": pages,
             "losses": losses,
@@ -984,6 +992,19 @@ pub fn handle_of(opened: &Value) -> Result<u64, OfficeError> {
         .get("handle")
         .and_then(Value::as_u64)
         .ok_or_else(|| OfficeError::runtime("the engine did not return a document handle"))
+}
+
+fn write_svg(path: &Path, page: &Value, overwrite: bool) -> Result<(), OfficeError> {
+    if path.exists() && !overwrite {
+        return Err(OfficeError::runtime(format!("{} already exists; pass --overwrite to replace it", path.display()))
+            .with_code("target-exists"));
+    }
+    let svg = page
+        .get("svg")
+        .and_then(Value::as_str)
+        .ok_or_else(|| OfficeError::runtime("the engine returned no SVG for this page"))?;
+    fs::write(path, svg)
+        .map_err(|error| OfficeError::runtime(format!("cannot write {}: {error}", path.display())).with_code("unwritable"))
 }
 
 fn runtime(error: impl fmt::Display) -> OfficeError {

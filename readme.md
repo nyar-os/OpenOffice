@@ -45,7 +45,7 @@ You can also place a prebuilt `open-office` binary on your `PATH`. Source builds
 - **One binary, four families.** Word, Excel, PowerPoint and PDF share a single executable and a single command vocabulary.
 - **Reports from the engine that did the work.** Word documents return Word summaries and checks, workbooks return workbook summaries and checks, decks return slide summaries and import losses, PDFs return version, geometry, metadata, bookmarks and form fields.
 - **Bytes before extensions.** `probe` reads the file, names the container, keeps every still-possible candidate and quotes the evidence. The extension is a hint, not proof.
-- **Preview without the app.** `render` asks the owning engine for SVG: one page for a workbook sheet, one page per presentation slide, with `--out` writing a single selected page.
+- **Preview without the app.** `render` asks the owning engine for SVG: one page for a workbook sheet, one page per presentation slide, with `--out` writing a single selected page and `--out-dir` writing every page.
 - **Real conversion targets.** A workbook exports to CSV, JSON, HTML or PDF, a deck becomes PPTX or PDF, a PDF extracts to Markdown or text. Unsupported targets are refused with the list of targets that work.
 - **Guardrails by default.** Existing outputs require `--overwrite`, `--points` is accepted only for presentations, `--pages` only for PDF text, and bytes that contradict the extension are rejected.
 - **Batch without surprises.** Multiple inputs convert into an output directory named after each source stem, and one failure does not stop the rest.
