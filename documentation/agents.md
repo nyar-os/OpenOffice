@@ -15,6 +15,7 @@ open-office formats
 
 | Command | Flags | Notes |
 |---------|-------|-------|
+| `open <file>` | `--print` | Routes by extension and opens the file with the platform viewer: `cmd /C start` on Windows, `open` on macOS, `xdg-open` elsewhere. `--print` reports `{ kind, path, opener, opened: false }` without launching anything; use it on headless hosts and in tests. The suite ships no viewer of its own. |
 | `probe <file>...` | none | Reads the bytes; does not route by extension and does not open the document. One path returns the single envelope, more paths return a batch report. Aliases: `inspect-file`, `inspect_file`. |
 | `inspect <file>...` | none | Dispatches to the owning engine; one path returns the single envelope, more paths return a batch report. |
 | `stats <file>...` | none | Lightweight per-family statistics; one path returns the single envelope, more paths return a batch report. |
@@ -29,6 +30,8 @@ open-office formats
 | `help` / `--help` / `-h` | none | Prints usage. |
 
 Unknown options are usage errors. `convert` lowercases `--format`, and batch targets are written as `<out-dir>/<source-stem>.<format>`.
+
+`open` is a routing convenience, not an editor. It checks the extension and that the file exists, then hands the file to the platform. A missing opener or a non-zero exit reports `open-failed`; use the individual product CLI (`open-word open`, `open-excel open`, `open-ppt open`, `open-pdf open`) when the product GUI or reader should handle the file.
 
 Exit codes: `0` success, `2` usage error, `1` runtime error. A batch conversion, a multi-file `probe`, `stats`, `outline`, `search` or `inspect` prints its JSON report and then exits `1` when `failed` is greater than zero.
 

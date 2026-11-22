@@ -49,6 +49,7 @@ fn run(arguments: &[String]) -> Result<(), OfficeError> {
         "search" => search(&office, rest),
         "render" => render(&office, rest),
         "convert" => convert(&office, rest),
+        "open" => open(&office, rest),
         "help" | "--help" | "-h" => {
             usage();
             Ok(())
@@ -242,6 +243,27 @@ fn render(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
     print_json(&office.render(Path::new(&path), &options)?)
 }
 
+/// Parses `open` options and opens one file with the platform viewer.
+///
+/// `--print` reports the routed family and opener without launching anything,
+/// which is the only form that is meaningful on headless hosts.
+fn open(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
+    let mut path = None;
+    let mut print_only = false;
+    for argument in arguments {
+        match argument.as_str() {
+            "--print" => print_only = true,
+            value if value.starts_with('-') => {
+                return Err(OfficeError::usage(format!("unknown option `{value}`")));
+            }
+            value if path.is_none() => path = Some(value.to_string()),
+            _ => return Err(OfficeError::usage("open takes exactly one document path")),
+        }
+    }
+    let path = path.ok_or_else(|| OfficeError::usage("a document path is required"))?;
+    print_json(&office.open(Path::new(&path), print_only)?)
+}
+
 /// Parses `convert` options and hands one request to the library.
 fn convert(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
     let mut inputs: Vec<String> = Vec::new();
@@ -342,6 +364,8 @@ fn usage() {
          \x20 open-office probe download.bin\n\
          \x20 open-office probe a.bin b.docx c.pdf\n\
          \x20 open-office inspect report.docx\n\
+         \x20 open-office open deck.pptx\n\
+         \x20 open-office open report.docx --print\n\
          \x20 open-office inspect a.docx b.pdf c.xlsx\n\
          \x20 open-office stats report.docx\n\
          \x20 open-office stats a.docx b.pdf c.xlsx\n\

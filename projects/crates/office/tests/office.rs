@@ -107,6 +107,28 @@ fn outline_many_reports_each_input_in_order() {
 }
 
 #[test]
+fn open_routes_a_file_and_can_print_the_route() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-open-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let source = dir.join("notes.md");
+    fs::write(&source, b"# Title\n").expect("write markdown");
+
+    let report = office.open(&source, true).expect("print route");
+    assert_eq!(report["kind"], json!("word"));
+    assert_eq!(report["path"], json!(source.display().to_string()));
+    assert_eq!(report["opened"], json!(false));
+    assert!(!report["opener"].as_str().expect("opener").is_empty());
+
+    let missing = office.open(&dir.join("missing.docx"), true).expect_err("missing file");
+    assert_eq!(missing.code(), "not-found");
+    let unsupported = office.open(&dir.join("notes.zip"), true).expect_err("unsupported extension");
+    assert_eq!(unsupported.code(), "unsupported-extension");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn search_many_reports_each_input_in_order() {
     let office = Office::new();
     let dir = std::env::temp_dir().join(format!("open-office-search-many-{}", std::process::id()));

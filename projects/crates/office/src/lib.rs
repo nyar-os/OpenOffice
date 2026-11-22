@@ -171,7 +171,7 @@ impl Office {
     pub fn capabilities(&self) -> Value {
         json!({
             "engine": { "package": "open-office", "version": VERSION },
-            "commands": ["probe", "inspect", "convert", "formats", "stats", "outline", "search", "render", "capabilities", "version"],
+            "commands": ["probe", "inspect", "convert", "open", "formats", "stats", "outline", "search", "render", "capabilities", "version"],
             "modules": {
                 "word": open_word_document::capabilities(),
                 "excel": open_excel_workbook::capabilities(),
@@ -195,6 +195,54 @@ impl Office {
             "presentation": { "import": Kind::Presentation.imports(), "export": Kind::Presentation.exports() },
             "pdf": { "import": Kind::Pdf.imports(), "export": Kind::Pdf.exports() },
         })
+    }
+
+    /// Opens one document in the platform's default viewer.
+    ///
+    /// The file is routed by extension first, so the report always names the
+    /// family that owns it. `print_only` returns the same report without
+    /// launching anything, which keeps route checks usable on headless hosts.
+    /// The suite ships no viewer of its own: on Windows it starts the file with
+    /// `cmd /C start`, on macOS it uses `open` and elsewhere `xdg-open`.
+    pub fn open(&self, path: &Path, print_only: bool) -> Result<Value, OfficeError> {
+        let kind = Kind::of_path(path)?;
+        if !path.exists() {
+            return Err(OfficeError::runtime(format!("{} does not exist", path.display())).with_code("not-found"));
+        }
+        let opener = default_opener();
+        let mut report = json!({
+            "kind": kind.label(),
+            "path": path.display().to_string(),
+            "opener": opener,
+            "opened": false,
+        });
+        if print_only {
+            return Ok(report);
+        }
+        let status = if cfg!(windows) {
+            std::process::Command::new("cmd")
+                .arg("/C")
+                .arg("start")
+                .arg("")
+                .arg(path)
+                .status()
+        }
+        else {
+            std::process::Command::new(opener).arg(path).status()
+        }
+        .map_err(|error| {
+            OfficeError::runtime(format!("cannot start {opener} for {}: {error}", path.display())).with_code("open-failed")
+        })?;
+        if !status.success() {
+            return Err(OfficeError::runtime(format!(
+                "{opener} exited with {} for {}",
+                status.code().map_or_else(|| "a signal".to_owned(), |code| code.to_string()),
+                path.display()
+            ))
+            .with_code("open-failed"));
+        }
+        report["opened"] = Value::Bool(true);
+        Ok(report)
     }
 
     /// Probes what a file's bytes prove about its format, using the extension as a hint only.
@@ -874,6 +922,19 @@ impl Office {
             }
         }
         Ok(json!({ "inspected": inspected, "failed": failed, "results": results }))
+    }
+}
+
+/// Name of the platform command that opens a file in its default application.
+fn default_opener() -> &'static str {
+    if cfg!(windows) {
+        "cmd /C start"
+    }
+    else if cfg!(target_os = "macos") {
+        "open"
+    }
+    else {
+        "xdg-open"
     }
 }
 
