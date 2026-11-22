@@ -10,5 +10,8 @@
         "p": "git push && git push --tags --prune",
         "reset": "git reset Head~ --soft",
         "u": "cargo upgrade --workspace"
+    },
+    "devDependencies": {
+        "@doki-land/nifty": "^0.1.15"
     }
 }

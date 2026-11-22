@@ -553,7 +553,8 @@ impl Office {
 /// Word, Spreadsheet and Presentation package all look alike until the parts are
 /// read, so a header-only check could not tell XLSX from PPTX. A resolved family
 /// that contradicts the route is refused with the probe's own evidence.
-fn verify_container(path: &Path, kind: Kind) -> Result<(), OfficeError> {
+#[doc(hidden)]
+pub fn verify_container(path: &Path, kind: Kind) -> Result<(), OfficeError> {
     if !path.exists() {
         return Err(OfficeError::runtime(format!("{} does not exist", path.display())).with_code("not-found"));
     }
@@ -594,7 +595,8 @@ fn presentation_search(path: &Path, query: &str, limit: usize) -> Result<(Vec<Va
 }
 
 /// Searches one serialized deck document and reports hit locations.
-fn presentation_hits(document: &Value, query: &str, limit: usize) -> (Vec<Value>, bool, Vec<Value>) {
+#[doc(hidden)]
+pub fn presentation_hits(document: &Value, query: &str, limit: usize) -> (Vec<Value>, bool, Vec<Value>) {
     let slides = document.get("slides").and_then(Value::as_array).cloned().unwrap_or_default();
     let mut hits = Vec::new();
     'slides: for (index, slide) in slides.iter().enumerate() {
@@ -679,7 +681,8 @@ fn pdf_search(path: &Path, query: &str, limit: usize) -> Result<(Vec<Value>, boo
 }
 
 /// Collects every string held under a `text` key inside one content subtree.
-fn collect_json_text(value: Option<&Value>, out: &mut Vec<String>) {
+#[doc(hidden)]
+pub fn collect_json_text(value: Option<&Value>, out: &mut Vec<String>) {
     match value {
         Some(Value::Object(map)) => {
             for (key, value) in map {
@@ -710,7 +713,8 @@ fn collect_json_text(value: Option<&Value>, out: &mut Vec<String>) {
 }
 
 /// Returns character offsets and matched text for up to `limit` occurrences.
-fn match_spans(text: &str, query: &str, limit: usize) -> Vec<(usize, usize, String)> {
+#[doc(hidden)]
+pub fn match_spans(text: &str, query: &str, limit: usize) -> Vec<(usize, usize, String)> {
     if query.is_empty() || limit == 0 {
         return Vec::new();
     }
@@ -863,7 +867,8 @@ fn invalid_pages(message: impl Into<String>) -> OfficeError {
     OfficeError::usage(message).with_code("invalid-pages")
 }
 
-fn handle_of(opened: &Value) -> Result<u64, OfficeError> {
+#[doc(hidden)]
+pub fn handle_of(opened: &Value) -> Result<u64, OfficeError> {
     opened
         .get("handle")
         .and_then(Value::as_u64)
@@ -879,398 +884,3 @@ fn conversion(error: impl fmt::Display) -> OfficeError {
     OfficeError::runtime(error.to_string()).with_code("conversion-failed")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn convert_many_requires_inputs_format_and_out_dir() {
-        let office = Office::new();
-        let dir = Path::new("out");
-        assert!(office.convert_many(&[], "pdf", dir, false).expect_err("empty inputs").is_usage());
-        assert!(
-            office.convert_many(&[PathBuf::from("a.docx")], "  ", dir, false).expect_err("empty format").is_usage()
-        );
-        assert!(
-            office.convert_many(&[PathBuf::from("a.docx")], "pdf", Path::new(""), false)
-                .expect_err("empty out dir")
-                .is_usage()
-        );
-    }
-
-    #[test]
-    fn convert_many_reports_missing_sources_per_item() {
-        let office = Office::new();
-        let out_dir = std::env::temp_dir().join(format!("open-office-convert-many-{}", std::process::id()));
-        let inputs = vec![PathBuf::from("missing-a.docx"), PathBuf::from("missing-b.xlsx")];
-        let report = office.convert_many(&inputs, "pdf", &out_dir, false).expect("batch result");
-        assert_eq!(report["converted"], json!(0));
-        assert_eq!(report["failed"], json!(2));
-        let results = report["results"].as_array().expect("results array");
-        assert_eq!(results.len(), 2);
-        assert_eq!(results[0]["source"], json!("missing-a.docx"));
-        assert_eq!(results[0]["target"], json!(out_dir.join("missing-a.pdf").display().to_string()));
-        assert_eq!(results[0]["ok"], json!(false));
-        assert_eq!(results[0]["code"], json!("not-found"));
-        assert!(results[0]["error"].as_str().expect("error message").contains("does not exist"));
-        assert_eq!(results[1]["ok"], json!(false));
-        let _ = fs::remove_dir_all(&out_dir);
-    }
-
-    /// Batch failures carry a stable code next to the unchanged human message.
-    #[test]
-    fn convert_many_reports_stable_error_codes() {
-        let office = Office::new();
-        let dir = std::env::temp_dir().join(format!("open-office-error-codes-{}", std::process::id()));
-        fs::create_dir_all(&dir).expect("temp dir");
-        fs::write(dir.join("notes.bin"), b"just words").expect("write unknown");
-        let inputs = vec![PathBuf::from("missing-c.docx"), dir.join("notes.bin")];
-        let report = office.convert_many(&inputs, "pdf", &dir.join("out"), false).expect("batch result");
-        assert_eq!(report["converted"], json!(0));
-        assert_eq!(report["failed"], json!(2));
-        let results = report["results"].as_array().expect("results array");
-        assert_eq!(results[0]["code"], json!("not-found"));
-        assert_eq!(results[1]["code"], json!("unsupported-extension"));
-        assert!(results[1]["error"].is_string());
-
-        let source = dir.join("notes.md");
-        fs::write(&source, b"# Title\n").expect("write markdown");
-        let target = dir.join("notes.pdf");
-        fs::write(&target, b"%PDF-1.7\n").expect("write target");
-        let error = office.convert(&source, "pdf", &target, false).expect_err("target exists");
-        assert_eq!(error.code(), "target-exists");
-        assert!(!error.is_usage());
-
-        let error = office.convert(&source, "xlsx", &dir.join("notes.xlsx"), false).expect_err("unsupported target");
-        assert_eq!(error.code(), "unsupported-target");
-        assert!(error.is_usage());
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    /// A `.pdf` route must not accept plain text that has no PDF header.
-    #[test]
-    fn container_probe_refuses_a_pdf_route_for_plain_text() {
-        let dir = std::env::temp_dir().join(format!("open-office-probe-text-{}", std::process::id()));
-        fs::create_dir_all(&dir).expect("temp dir");
-        let path = dir.join("notes.pdf");
-        fs::write(&path, b"just words").expect("write probe");
-        let error = verify_container(&path, Kind::Pdf).expect_err("plain text is not a PDF");
-        assert!(error.message().contains("notes.pdf is routed as pdf"), "unexpected message: {}", error.message());
-        assert!(error.message().contains("plain text has no container header"), "the probe evidence is quoted: {}", error.message());
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    /// PDF bytes routed by a spreadsheets extension are refused with the probe evidence.
-    #[test]
-    fn container_probe_refuses_pdf_bytes_routed_as_a_sheet() {
-        let dir = std::env::temp_dir().join(format!("open-office-probe-sheet-{}", std::process::id()));
-        fs::create_dir_all(&dir).expect("temp dir");
-        let path = dir.join("sheet.xlsx");
-        fs::write(&path, b"%PDF-1.7\n").expect("write probe");
-        let error = verify_container(&path, Kind::Excel).expect_err("PDF bytes are not a sheet");
-        assert!(error.message().contains("sheet.xlsx is routed as excel"), "unexpected message: {}", error.message());
-        assert!(error.message().contains("identifies a PDF stream"), "the probe evidence is quoted: {}", error.message());
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn container_probe_accepts_a_pdf_that_really_is_one() {
-        let dir = std::env::temp_dir().join(format!("open-office-probe-pdf-{}", std::process::id()));
-        fs::create_dir_all(&dir).expect("temp dir");
-        let path = dir.join("notes.pdf");
-        fs::write(&path, b"%PDF-1.7\n").expect("write probe");
-        verify_container(&path, Kind::Pdf).expect("a PDF header matches the PDF route");
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    /// A probe reports the verified container facts and the quoted evidence.
-    #[test]
-    fn probe_reports_pdf_bytes_as_verified() {
-        let dir = std::env::temp_dir().join(format!("open-office-format-probe-pdf-{}", std::process::id()));
-        fs::create_dir_all(&dir).expect("temp dir");
-        let path = dir.join("notes.pdf");
-        fs::write(&path, b"%PDF-1.7\n").expect("write probe");
-        let report = Office::new().probe(&path).expect("probe");
-        assert_eq!(report["path"], json!(path.display().to_string()));
-        assert_eq!(report["bytes"], json!(9));
-        assert_eq!(report["extension"], json!("pdf"));
-        assert_eq!(report["format"], json!("pdf"));
-        assert_eq!(report["container"], json!("pdf"));
-        assert_eq!(report["confidence"], json!("verified"));
-        assert_eq!(report["candidates"], json!(["pdf"]));
-        assert!(report["evidence"].as_str().expect("evidence").contains("%PDF-"), "unexpected evidence: {}", report["evidence"]);
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    /// The extension is a hint for plain text, not proof of the format.
-    #[test]
-    fn probe_uses_the_extension_as_a_hint_only() {
-        let dir = std::env::temp_dir().join(format!("open-office-format-probe-hint-{}", std::process::id()));
-        fs::create_dir_all(&dir).expect("temp dir");
-        let hinted = dir.join("notes.md");
-        fs::write(&hinted, b"# Title\n\nBody.\n").expect("write hinted");
-        let report = Office::new().probe(&hinted).expect("probe hinted");
-        assert_eq!(report["format"], json!("markdown"));
-        assert_eq!(report["container"], json!("plain"));
-        assert_eq!(report["confidence"], json!("hinted"));
-        assert_eq!(report["candidates"], json!(["markdown"]));
-
-        let unproven = dir.join("notes.docx");
-        fs::write(&unproven, b"just words").expect("write unproven");
-        let report = Office::new().probe(&unproven).expect("probe unproven");
-        assert_eq!(report["format"], Value::Null);
-        assert_eq!(report["confidence"], json!("unknown"));
-        assert_eq!(report["candidates"], json!([]));
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    /// A ZIP container without readable parts keeps every package candidate.
-    #[test]
-    fn probe_keeps_zip_package_candidates_ambiguous() {
-        let dir = std::env::temp_dir().join(format!("open-office-format-probe-zip-{}", std::process::id()));
-        fs::create_dir_all(&dir).expect("temp dir");
-        let path = dir.join("payload.bin");
-        fs::write(&path, b"PK\x03\x04not-a-package").expect("write probe");
-        let report = Office::new().probe(&path).expect("probe");
-        assert_eq!(report["format"], Value::Null);
-        assert_eq!(report["container"], json!("zip"));
-        assert_eq!(report["confidence"], json!("ambiguous"));
-        assert_eq!(report["candidates"], json!(["docx", "xlsx", "pptx", "epub"]));
-        assert!(report["evidence"].as_str().expect("evidence").contains("ZIP container"));
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    /// Probing a path that is not there is a runtime failure, not a usage error.
-    #[test]
-    fn probe_rejects_a_missing_file() {
-        let path = std::env::temp_dir().join("open-office-format-probe-missing.bin");
-        let _ = fs::remove_file(&path);
-        let error = Office::new().probe(&path).expect_err("missing file");
-        assert!(!error.is_usage());
-        assert!(error.message().contains("does not exist"), "unexpected message: {}", error.message());
-    }
-
-    /// Builds a small multi-page PDF so page-range behaviour can be exercised.
-    fn two_page_pdf(dir: &Path) -> PathBuf {
-        let source = dir.join("source.pdf");
-        let request = open_pdf_core::CreateRequest {
-            out: source.clone(),
-            pages: vec!["Alpha page".to_string(), "Beta page".to_string()],
-            overwrite: true,
-            ..Default::default()
-        };
-        open_pdf_core::create(&request).expect("create pdf");
-        source
-    }
-
-    #[test]
-    fn pdf_conversion_extracts_only_the_requested_pages() {
-        let dir = std::env::temp_dir().join(format!("open-office-pages-range-{}", std::process::id()));
-        fs::create_dir_all(&dir).expect("temp dir");
-        let source = two_page_pdf(&dir);
-        let target = dir.join("page-two.md");
-        let options = ConvertOptions { pages: Some("2".to_string()) };
-        let report = Office::new().convert_with(&source, "md", &target, false, &options).expect("page conversion");
-        assert_eq!(report["report"]["pages"]["requested"], json!("2"));
-        assert_eq!(report["report"]["pages"]["extracted"], json!(1));
-        assert_eq!(report["report"]["pages"]["numbers"], json!([2]));
-        let markdown = fs::read_to_string(&target).expect("read markdown");
-        assert!(markdown.contains("Beta page"), "unexpected markdown: {markdown}");
-        assert!(!markdown.contains("Alpha page"), "page 1 must be excluded: {markdown}");
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn pdf_page_ranges_refuse_invalid_requests() {
-        let dir = std::env::temp_dir().join(format!("open-office-pages-invalid-{}", std::process::id()));
-        fs::create_dir_all(&dir).expect("temp dir");
-        let source = two_page_pdf(&dir);
-        let office = Office::new();
-        let target = dir.join("out.md");
-        let range = |pages: &str| ConvertOptions { pages: Some(pages.to_string()) };
-
-        let error = office.convert_with(&source, "md", &target, false, &range("3")).expect_err("out of range");
-        assert_eq!(error.code(), "invalid-pages");
-        assert!(error.is_usage());
-
-        let error = office.convert_with(&source, "md", &target, false, &range("1,1")).expect_err("duplicate page");
-        assert_eq!(error.code(), "invalid-pages");
-
-        let error = office.convert_with(&source, "md", &target, false, &range(" ")).expect_err("empty range");
-        assert_eq!(error.code(), "invalid-pages");
-
-        let markdown = dir.join("notes.md");
-        fs::write(&markdown, b"# Title\n").expect("write markdown");
-        let error = office.convert_with(&markdown, "pdf", &dir.join("notes.pdf"), false, &range("1")).expect_err("not a PDF");
-        assert_eq!(error.code(), "unsupported-option");
-        assert!(error.is_usage());
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn outline_nests_word_headings() {
-        let dir = std::env::temp_dir().join(format!("open-office-outline-word-{}", std::process::id()));
-        fs::create_dir_all(&dir).expect("temp dir");
-        let created = open_word_document::create(&json!({ "title": "Outline" })).expect("create");
-        let handle = handle_of(&created).expect("handle");
-        open_word_document::edit(
-            handle,
-            &json!({
-                "operations": [
-                    { "type": "heading.append", "level": 1, "text": "Overview" },
-                    { "type": "heading.append", "level": 2, "text": "Details" },
-                ],
-            }),
-        )
-        .expect("seed headings");
-        let path = dir.join("outline.oword");
-        open_word_document::save(handle, &path, true).expect("save");
-        let _ = open_word_document::close(handle);
-
-        let report = Office::new().outline(&path, false).expect("outline");
-        assert_eq!(report["kind"], json!("word"));
-        assert_eq!(report["outline"]["items"][0]["title"], json!("Overview"));
-        assert_eq!(report["outline"]["items"][0]["children"][0]["title"], json!("Details"));
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn outline_lists_workbook_sheets_and_refuses_points() {
-        let dir = std::env::temp_dir().join(format!("open-office-outline-excel-{}", std::process::id()));
-        fs::create_dir_all(&dir).expect("temp dir");
-        let created = open_excel_workbook::create(&json!({ "title": "Outline" })).expect("create");
-        let handle = handle_of(&created).expect("handle");
-        let path = dir.join("outline.oexcel");
-        open_excel_workbook::save(handle, &path, true).expect("save");
-        let _ = open_excel_workbook::close(handle);
-
-        let office = Office::new();
-        let report = office.outline(&path, false).expect("outline");
-        assert_eq!(report["kind"], json!("excel"));
-        assert_eq!(report["outline"]["sheets"][0]["name"], json!("Sheet1"));
-
-        let error = office.outline(&path, true).expect_err("points are presentations only");
-        assert_eq!(error.code(), "unsupported-option");
-        assert!(error.is_usage());
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn outline_reads_pdf_bookmarks() {
-        let dir = std::env::temp_dir().join(format!("open-office-outline-pdf-{}", std::process::id()));
-        fs::create_dir_all(&dir).expect("temp dir");
-        let source = two_page_pdf(&dir);
-        let marked = dir.join("marked.pdf");
-        open_pdf_core::set_bookmarks(
-            &source,
-            &marked,
-            &[
-                open_pdf_core::Bookmark { title: "Top".to_owned(), page: 1, depth: Some(0) },
-                open_pdf_core::Bookmark { title: "Child".to_owned(), page: 2, depth: Some(1) },
-            ],
-        )
-        .expect("bookmarks");
-
-        let report = Office::new().outline(&marked, false).expect("outline");
-        assert_eq!(report["kind"], json!("pdf"));
-        assert_eq!(report["outline"]["pages"], json!(2));
-        assert_eq!(report["outline"]["bookmarks"][0]["title"], json!("Top"));
-        assert_eq!(report["outline"]["bookmarks"][0]["depth"], json!(1));
-        assert_eq!(report["outline"]["bookmarks"][1]["depth"], json!(2));
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn outline_lists_presentation_slides_with_points() {
-        let dir = std::env::temp_dir().join(format!("open-office-outline-deck-{}", std::process::id()));
-        fs::create_dir_all(&dir).expect("temp dir");
-        let deck = open_ppt_deck::create(open_ppt_deck::CreateRequest {
-            title: Some("Outline".to_owned()),
-            size: None,
-            theme: None,
-            slides: vec!["Intro".to_owned(), "Plan".to_owned()],
-        })
-        .expect("create");
-        let path = dir.join("outline.project");
-        open_ppt_deck::save(&deck, &path, true).expect("save");
-
-        let report = Office::new().outline(&path, true).expect("outline");
-        assert_eq!(report["kind"], json!("presentation"));
-        assert_eq!(report["outline"]["slides"][0]["title"], json!("Intro"));
-        assert_eq!(report["outline"]["slides"][1]["title"], json!("Plan"));
-        assert_eq!(report["outline"]["slides"][0]["points"], json!([]));
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn match_spans_returns_character_offsets() {
-        assert_eq!(match_spans("标题和标题", "标题", 10), vec![(0, 2, "标题".to_owned()), (3, 5, "标题".to_owned())]);
-        assert_eq!(match_spans("aaaa", "aa", 1).len(), 1);
-        assert!(match_spans("text", "", 10).is_empty());
-        assert!(match_spans("text", "missing", 10).is_empty());
-    }
-
-    #[test]
-    fn collect_json_text_reads_only_text_leaves() {
-        let value = json!({
-            "paragraphs": [{ "runs": [{ "text": "Hello", "style": { "color": "#ff0000" } }] }],
-            "color": "#00ff00",
-            "cells": [{ "text": { "paragraphs": [{ "runs": [{ "text": "Cell" }] }] } }],
-        });
-        let mut texts = Vec::new();
-        collect_json_text(Some(&value), &mut texts);
-        texts.sort();
-        assert_eq!(texts, vec!["Cell".to_owned(), "Hello".to_owned()]);
-    }
-
-    #[test]
-    fn presentation_hits_cover_text_tables_and_notes() {
-        let document = json!({
-            "slides": [{
-                "id": "slide-1",
-                "notes": "Roadmap notes",
-                "elements": [
-                    { "id": "element-1", "content": { "paragraphs": [{ "runs": [{ "text": "Roadmap" }] }] } },
-                    {
-                        "id": "element-2",
-                        "content": {
-                            "rows": [{ "cells": [{ "text": { "paragraphs": [{ "runs": [{ "text": "Roadmap" }] }] } }] }],
-                        },
-                    },
-                ],
-            }],
-        });
-        let (hits, truncated, _) = presentation_hits(&document, "Roadmap", 10);
-        assert_eq!(hits.len(), 3);
-        assert_eq!(hits[0]["source"], json!("notes"));
-        assert_eq!(hits[1]["source"], json!("text"));
-        assert_eq!(hits[2]["source"], json!("table"));
-        assert!(!truncated);
-        let (limited, truncated, _) = presentation_hits(&document, "Roadmap", 1);
-        assert_eq!(limited.len(), 1);
-        assert!(truncated);
-    }
-
-    #[test]
-    fn search_finds_presentation_text_through_the_office_facade() {
-        let dir = std::env::temp_dir().join(format!("open-office-search-deck-{}", std::process::id()));
-        fs::create_dir_all(&dir).expect("temp dir");
-        let deck = open_ppt_deck::create(open_ppt_deck::CreateRequest {
-            title: Some("Search".to_owned()),
-            size: None,
-            theme: None,
-            slides: vec!["Roadmap".to_owned(), "Budget".to_owned()],
-        })
-        .expect("create");
-        let path = dir.join("search.project");
-        open_ppt_deck::save(&deck, &path, true).expect("save");
-
-        let report = Office::new().search(&path, "Roadmap", Some(10)).expect("search");
-        assert_eq!(report["kind"], json!("presentation"));
-        assert_eq!(report["query"], json!("Roadmap"));
-        assert!(!report["hits"].as_array().expect("hits").is_empty());
-        assert_eq!(report["hits"][0]["slideIndex"], json!(0));
-        assert_eq!(report["hits"][0]["text"], json!("Roadmap"));
-        let _ = fs::remove_dir_all(&dir);
-    }
-}

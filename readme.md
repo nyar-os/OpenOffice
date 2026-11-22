@@ -1,116 +1,80 @@
 # OpenOffice
 
-![Format Suite](https://img.shields.io/badge/formats-word%20%7C%20excel%20%7C%20ppt%20%7C%20pdf-blue)
-![One Binary](https://img.shields.io/badge/shipping-one%20binary-brightgreen)
+![Formats](https://img.shields.io/badge/formats-word%20%7C%20excel%20%7C%20pptx%20%7C%20pdf-blue)
+![One binary](https://img.shields.io/badge/shipping-one%20binary-brightgreen)
+![License](https://img.shields.io/badge/license-MPL--2.0-blue)
 
-Thin all-in-one host that bundles OpenWord, OpenExcel, OpenPPT, and OpenPDF into a single binary. All four Office format handlers are built into a single binary — no separate engines to install.
+[Getting started](#-getting-started) · [Agent reference](documentation/agents.md) · [License](License.md)
 
-Each sub-product (OpenWord, OpenExcel, OpenPPT, OpenPDF) is also independently installable. OpenOffice exists so you can ship one binary that covers all Office formats.
+## 💡 What is OpenOffice?
 
-## 🧩 Architecture
+OpenOffice is one binary for four document families: Word, Excel, PowerPoint and PDF. It probes what a file really is, inspects its structure, reports statistics, projects its outline, searches its text, and converts it to another format.
 
-```mermaid
-graph TD
-    A[OpenOffice Repo] --> B[OpenWord Repo]
-    A --> C[OpenExcel Repo]
-    A --> D[OpenPPT Repo]
-    A --> E[OpenPDF Repo]
-    B --> F[Native bridge]
-    C --> G[Native bridge]
-    D --> H[Native bridge]
-    E --> I[Native bridge]
-    F --> J[Shared processing engine]
-    G --> J
-    H --> J
-    I --> J
-```
+The binary does not grow a fifth document model. Every request is routed to the engine that owns the format, so summaries, checks, statistics, outlines and search hits are the owning engine's own reports. There is no copied parser and no second source of truth. Conversion targets are the ones the owning engine actually writes: a target that cannot be produced is refused with a clear message instead of being faked.
 
-## 📦 Product Matrix
+## 🚀 Getting started
 
-| Product | Scope | Independent Repo |
-|---------|-------|-----------------|
-| OpenOffice | Thin bundle — one binary, all four modules | This repo |
-| OpenWord | `.docx` parse, create, convert | `OpenWord` |
-| OpenExcel | `.xlsx` read/write, formulas, pivots | `OpenExcel` |
-| OpenPPT | `.pptx` generate and template fill | `OpenPPT` |
-| OpenPDF | PDF generate, merge, split, metadata | `OpenPDF` |
+### 1. Agent / prompt (recommended)
 
-## What's NOT here
+Give an agent the `open-office` binary and a goal. It can discover capabilities, inspect before it edits, and convert only to a target the source engine supports.
 
-- **No comprehensive test fixtures** — only minimal smoke tests exist here. Detailed conformance, fixtures, and acceptance scripts stay with each downstream product.
-- **No heavy GUI** — this repo is a thin shell. If a desktop UI ships, it is built on top of the native bridge in each sub-product.
+> Inspect `budget.xlsx`, list its sheets and any problem cells, then convert it to `out/budget.pdf`. Do not overwrite an existing file.
 
-## 🚀 Usage
+The agent resolves that request with three commands:
 
 ```bash
-# Build the single binary (path dependencies on the four sibling repos)
-cargo build --release -p open-office
-
-# Show what every bundled engine actually supports
 open-office capabilities
-
-# Inspect a document through its owning engine
-open-office inspect path/to/report.docx
-open-office inspect path/to/budget.xlsx
-open-office inspect path/to/deck.pptx
-open-office inspect path/to/paper.pdf
-
-# Project one document into its navigable outline
-open-office outline path/to/report.docx
-open-office outline path/to/budget.xlsx
-open-office outline path/to/deck.pptx --points
-open-office outline path/to/paper.pdf
-
-# Search the text one document owns
-open-office search path/to/report.docx --text invoice
-open-office search path/to/budget.xlsx --text total --limit 20
-open-office search path/to/deck.pptx --text roadmap
-open-office search path/to/paper.pdf --text "conclusion"
-
-# Convert with an explicit target format
-open-office convert notes.md --format pdf --out notes.pdf
-open-office convert budget.xlsx --format csv --out budget.csv
-open-office convert deck.pptx --format pdf --out deck.pdf
-open-office convert paper.pdf --format md --out paper.md
+open-office inspect budget.xlsx
+open-office convert budget.xlsx --format pdf --out out/budget.pdf
 ```
 
-`inspect` returns the engine's own JSON report: word summary, statistics and
-rule checks; workbook summary and checks; deck summary and import losses; PDF
-version, page geometry, metadata, bookmarks and form fields. `convert` refuses
-targets the source engine cannot write and never overwrites without
-`--overwrite`.
+Every command prints JSON on stdout, so the agent can branch on `kind`, `stats`, `hits`, `outline` or `report` without scraping prose. The full command surface, report shapes, error codes and guardrails are in the [agent reference](documentation/agents.md).
 
-`outline` returns the structure each family actually owns: nested headings for
-word documents, sheets for workbooks, slide titles (plus talking points with
-`--points`) for presentations, and outline bookmarks for PDFs. `--points` is
-refused for any other family instead of being silently ignored.
+### 2. Manual install
 
-`search` is case-sensitive for every family so one query behaves the same way
-across all four engines. Word and Excel reuse their native `find`; presentations
-search slide text, table cells and speaker notes; PDFs scan the extracted
-Markdown line by line, and the report notes that page numbers are not tracked
-per hit. Hits carry the engine's own location fields (`block_id`/`block_index`,
-`sheet`/`address`, `slideId`/`elementId`, or `line`) in a shared `hits` array.
+Install the binary from a source checkout with one command:
 
-Supported conversion targets:
-
-| Source | Targets |
-|--------|---------|
-| Word (`.docx`, `.docm`, `.rtf`, `.md`, `.html`, `.txt`, `.oword`) | `docx`, `pdf`, `html`, `md`, `txt`, `rtf` |
-| Excel (`.xlsx`, `.xlsm`, `.csv`, `.tsv`, `.oexcel`) | `xlsx`, `csv`, `tsv`, `json`, `html`, `pdf` |
-| Presentation (`.pptx`, `.pptm`, `.ppsx`, `.ppsm`, `.potx`, `.potm`, `.project`, `.oppt`) | `pptx`, `ppsx`, `potx`, `pdf` |
-| PDF (`.pdf`) | `md`, `txt` |
-
-## 🧱 Repo layout
-
-```
-OpenOffice/
-├── Cargo.toml
-├── projects/
-│   ├── crates/office/      # open-office binary, four-engine dispatch
-│   └── sub_projects/       # shared scaffold crate
-└── readme.md
+```bash
+cargo install --path projects/crates/office
 ```
 
-The binary links the sibling repositories through path dependencies; it does
-not copy their models or re-implement a format adapter.
+You can also place a prebuilt `open-office` binary on your `PATH`. Source builds read the four engine repositories from adjacent checkouts.
+
+## ✨ Highlights
+
+- **One binary, four families.** Word, Excel, PowerPoint and PDF share a single executable and a single command vocabulary.
+- **Reports from the engine that did the work.** Word documents return Word summaries and checks, workbooks return workbook summaries and checks, decks return slide summaries and import losses, PDFs return version, geometry, metadata, bookmarks and form fields.
+- **Bytes before extensions.** `probe` reads the file, names the container, keeps every still-possible candidate and quotes the evidence. The extension is a hint, not proof.
+- **Real conversion targets.** A workbook exports to CSV, JSON, HTML or PDF, a deck becomes PPTX or PDF, a PDF extracts to Markdown or text. Unsupported targets are refused with the list of targets that work.
+- **Guardrails by default.** Existing outputs require `--overwrite`, `--points` is accepted only for presentations, `--pages` only for PDF text, and bytes that contradict the extension are rejected.
+- **Batch without surprises.** Multiple inputs convert into an output directory named after each source stem, and one failure does not stop the rest.
+- **Stable locations.** Search hits carry the owning engine's own locators, and batch failures carry stable error codes.
+
+Supported formats:
+
+| Source family | Import extensions | Conversion targets |
+|---------------|-------------------|--------------------|
+| Word | `docx`, `docm`, `rtf`, `txt`, `md`, `markdown`, `html`, `htm`, `oword` | `docx`, `pdf`, `html`, `md`, `txt`, `rtf` |
+| Excel | `xlsx`, `xlsm`, `csv`, `tsv`, `oexcel` | `xlsx`, `csv`, `tsv`, `json`, `html`, `pdf` |
+| Presentation | `pptx`, `pptm`, `ppsx`, `ppsm`, `potx`, `potm`, `project`, `oppt`, `opresent` | `pptx`, `ppsx`, `potx`, `pdf` |
+| PDF | `pdf` | `md`, `txt`, `text` |
+
+## 📊 How OpenOffice compares
+
+| | A toolbox of four separate converters | OpenOffice |
+|---|---|---|
+| Install | Four tools with four command sets | One binary and one command set |
+| Format detection | Each tool trusts its own input rules | `probe` inspects the bytes once, for every family |
+| Reports | Four unrelated output shapes | One envelope with `kind`, `path` and a family payload |
+| Capability truth | Four places to check | `capabilities` aggregates each engine's own matrix |
+| Conversion safety | Varies per tool | One rule set: verified container, explicit target, no silent overwrite |
+
+## 🧪 Examples
+
+- [Agent command reference](documentation/agents.md) - command list, required and optional flags, JSON report shapes, error codes, family routing and guardrails.
+- `open-office formats` - the import and export matrix of the binary you installed.
+- `open-office capabilities` - the capability matrix reported by each bundled engine.
+
+## 📜 License
+
+OpenOffice is released under the Mozilla Public License 2.0. See [License.md](License.md).
