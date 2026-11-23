@@ -285,6 +285,7 @@ fn replace(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
     let mut find = None;
     let mut with = None;
     let mut ignore_case = false;
+    let mut dry_run = false;
     let mut limit = None;
     let mut index = 0;
     while index < arguments.len() {
@@ -296,6 +297,7 @@ fn replace(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
                 with = Some(value_of(arguments, &mut index, "--with")?);
             }
             "--ignore-case" | "-i" => ignore_case = true,
+            "--dry-run" => dry_run = true,
             "--limit" => {
                 let value = value_of(arguments, &mut index, "--limit")?;
                 limit = Some(
@@ -318,7 +320,7 @@ fn replace(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
     }
     let find = find.ok_or_else(|| OfficeError::usage("`--find <query>` is required"))?;
     let with = with.ok_or_else(|| OfficeError::usage("`--with <replacement>` is required"))?;
-    let options = ReplaceOptions { ignore_case, limit };
+    let options = ReplaceOptions { ignore_case, limit, dry_run };
     if paths.len() == 1 {
         return print_json(&office.replace(&paths[0], &find, &with, &options)?);
     }
@@ -486,7 +488,7 @@ fn usage() {
          \x20 open-office outline <file>... [--points] [--depth <n>]\n\
          \x20 open-office compare <left> <right>\n\
          \x20 open-office search <file>... --text <query> [--limit <n>]\n\
-         \x20 open-office replace <file>... --find <query> --with <replacement> [--ignore-case] [--limit <n>]\n\
+         \x20 open-office replace <file>... --find <query> --with <replacement> [--ignore-case] [--limit <n>] [--dry-run]\n\
          \x20 open-office render <file> [--sheet <name>] [--page <n>] [--out <file> | --out-dir <dir>] [--overwrite]\n\
          \x20 open-office render <file>... --out-dir <dir> [--sheet <name> | --page <n>] [--overwrite]\n\
          \x20 open-office formats\n\

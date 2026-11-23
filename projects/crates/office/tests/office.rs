@@ -775,7 +775,9 @@ fn replace_saves_a_word_document_in_place() {
     assert!(fs::read_to_string(&source).expect("still there").contains("Globex corp. and Globex Ltd."));
 
     let loosened =
-        office.replace(&source, "globex", "G", &ReplaceOptions { ignore_case: true, limit: Some(1) }).expect("limited replace");
+        office
+            .replace(&source, "globex", "G", &ReplaceOptions { ignore_case: true, limit: Some(1), dry_run: false })
+            .expect("limited replace");
     assert_eq!(loosened["replaced"], json!(1));
     let text = fs::read_to_string(&source).expect("read back");
     assert!(text.contains("G corp") ^ text.contains("G Ltd"), "exactly one match was replaced: {text}");
@@ -1075,5 +1077,69 @@ fn render_refuses_families_without_a_renderer() {
     let error = Office::new().render(&path, &RenderOptions::default()).expect_err("no word renderer");
     assert_eq!(error.code(), "unsupported-target");
     assert!(error.is_usage());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn replace_dry_run_counts_matches_without_writing_any_family() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-replace-dry-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+
+    let word = dir.join("notes.md");
+    fs::write(&word, b"# Acme\n\nAcme and Acme.\n").expect("write markdown");
+    let before = fs::read(&word).expect("read word bytes");
+    let report =
+        office.replace(&word, "Acme", "Globex", &ReplaceOptions { dry_run: true, ..Default::default() }).expect("word dry run");
+    assert_eq!(report["replaced"], json!(3));
+    assert_eq!(report["dryRun"], json!(true));
+    assert_eq!(report["saved"], Value::Null, "a dry run writes nothing");
+    assert_eq!(fs::read(&word).expect("read word bytes"), before);
+    assert_eq!(office.search(&word, "Acme", None).expect("search")["hits"].as_array().unwrap().len(), 3);
+
+    let workbook = dir.join("budget.oexcel");
+    let created = open_excel_workbook::create(&json!({ "title": "Dry" })).expect("create");
+    let handle = handle_of(&created).expect("handle");
+    open_excel_workbook::edit(
+        handle,
+        &json!({ "operations": [{ "op": "cell.set", "sheet": "Sheet1", "reference": "A1", "value": "Widget cost" }] }),
+    )
+    .expect("seed");
+    open_excel_workbook::save(handle, &workbook, true).expect("save");
+    let _ = open_excel_workbook::close(handle);
+    let before = fs::read(&workbook).expect("read workbook bytes");
+    let report =
+        office.replace(&workbook, "Widget", "Gadget", &ReplaceOptions { dry_run: true, ..Default::default() }).expect("excel dry run");
+    assert_eq!(report["replaced"], json!(1));
+    assert_eq!(report["saved"], Value::Null);
+    assert_eq!(fs::read(&workbook).expect("read workbook bytes"), before);
+    assert_eq!(office.search(&workbook, "Widget", None).expect("search")["hits"].as_array().unwrap().len(), 1);
+
+    let deck = open_ppt_deck::create(open_ppt_deck::CreateRequest {
+        title: Some("Dry deck".to_owned()),
+        size: None,
+        theme: None,
+        slides: vec!["Roadmap".to_owned()],
+    })
+    .expect("create deck");
+    let project = dir.join("deck.project");
+    open_ppt_deck::save(&deck, &project, true).expect("save project");
+    let before = fs::read(&project).expect("read project bytes");
+    let report = office
+        .replace(&project, "Roadmap", "Plan", &ReplaceOptions { dry_run: true, ..Default::default() })
+        .expect("presentation dry run");
+    assert_eq!(report["replaced"], json!(1));
+    assert_eq!(report["saved"], Value::Null);
+    assert_eq!(fs::read(&project).expect("read project bytes"), before);
+
+    let word_before = fs::read(&word).expect("read word bytes");
+    let batch = office
+        .replace_many(&[word.clone(), workbook.clone()], "Acme", "Globex", &ReplaceOptions { dry_run: true, ..Default::default() })
+        .expect("batch dry run");
+    assert_eq!(batch["dryRun"], json!(true));
+    assert_eq!(batch["updated"], json!(2));
+    assert_eq!(batch["results"][0]["replaced"], json!(3));
+    assert_eq!(fs::read(&word).expect("read word bytes"), word_before, "the batch leaves the word file untouched");
+
     let _ = fs::remove_dir_all(&dir);
 }

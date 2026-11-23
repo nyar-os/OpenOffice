@@ -166,6 +166,8 @@ pub struct ReplaceOptions {
     pub ignore_case: bool,
     /// Caps the replacements: per document for Word, per sheet for workbooks.
     pub limit: Option<u32>,
+    /// Counts matches without writing the changed document back to disk.
+    pub dry_run: bool,
 }
 
 /// The four-engine inspector and converter.
@@ -624,8 +626,9 @@ impl Office {
     /// case-sensitive unless `ignore_case` is set, mirroring the suite's
     /// case-sensitive `search`. A document with no match is reported with
     /// `replaced: 0` and its file is left untouched; only a document that
-    /// changed is written back in its own format. PDF has no replacement route
-    /// in this build.
+    /// changed is written back in its own format. With `dry_run` the engine
+    /// still counts matches, but `saved` stays null and the file on disk keeps
+    /// its bytes. PDF has no replacement route in this build.
     pub fn replace(&self, path: &Path, find: &str, with: &str, options: &ReplaceOptions) -> Result<Value, OfficeError> {
         if find.is_empty() {
             return Err(OfficeError::usage("`--find` needs a non-empty query").with_code("invalid-query"));
@@ -645,7 +648,7 @@ impl Office {
                 let outcome = open_word_document::replace(handle, &request).map_err(replace_failed)?;
                 let replaced = outcome.get("replaced").and_then(Value::as_u64).unwrap_or_default();
                 let revision = outcome.get("revision").cloned().unwrap_or(Value::Null);
-                let saved = if replaced == 0 {
+                let saved = if replaced == 0 || options.dry_run {
                     Value::Null
                 }
                 else {
@@ -691,7 +694,7 @@ impl Office {
                         open_excel_workbook::edit(handle, &json!({ "operations": operations })).map_err(replace_failed)?;
                     let replaced = outcome.get("replacements").and_then(Value::as_u64).unwrap_or_default();
                     let revision = outcome.get("revision").cloned().unwrap_or(revision);
-                    let saved = if replaced == 0 {
+                    let saved = if replaced == 0 || options.dry_run {
                         Value::Null
                     }
                     else {
@@ -729,7 +732,7 @@ impl Office {
                     .and_then(|value| value.as_u64().or_else(|| value.as_str().and_then(|text| text.parse().ok())))
                     .unwrap_or_default();
                 let revision = outcome.get("revision").cloned().unwrap_or(Value::Null);
-                let saved = if replaced == 0 {
+                let saved = if replaced == 0 || options.dry_run {
                     Value::Null
                 }
                 else if matches!(extension.as_str(), "project" | "oppt" | "opresent") {
@@ -762,6 +765,7 @@ impl Office {
             "find": find,
             "replace": with,
             "matchCase": match_case,
+            "dryRun": options.dry_run,
             "replaced": replaced,
             "revision": revision,
             "saved": saved,
@@ -817,6 +821,7 @@ impl Office {
         Ok(json!({
             "find": find,
             "replace": with,
+            "dryRun": options.dry_run,
             "updated": updated,
             "failed": failed,
             "results": results,
