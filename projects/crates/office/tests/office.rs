@@ -1153,6 +1153,17 @@ fn metadata_reports_the_title_each_family_stores() {
     assert_eq!(report["metadata"]["title"], json!("Paper"));
     assert_eq!(report["metadata"]["producer"], json!("OpenPDF"));
 
+    let batch = office
+        .metadata_many(&[word.clone(), dir.join("missing.oword"), paper.clone()])
+        .expect("metadata batch");
+    assert_eq!(batch["counted"], json!(2));
+    assert_eq!(batch["failed"], json!(1));
+    assert_eq!(batch["results"][0]["ok"], json!(true));
+    assert_eq!(batch["results"][0]["metadata"]["title"], json!("Brief"));
+    assert_eq!(batch["results"][1]["ok"], json!(false));
+    assert!(batch["results"][1]["code"].is_string());
+    assert_eq!(batch["results"][2]["metadata"]["title"], json!("Paper"));
+
     assert!(office.metadata(&dir.join("missing.oword")).is_err());
     let _ = fs::remove_dir_all(&dir);
 }

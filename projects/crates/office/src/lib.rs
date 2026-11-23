@@ -419,6 +419,44 @@ impl Office {
         }))
     }
 
+    /// Reports metadata for many documents on a best-effort basis.
+    ///
+    /// Every input is attempted in order; a failing document contributes only
+    /// its stable `code` and `error` and does not stop the batch. Each success
+    /// keeps the family `kind` and the same `metadata` object [`Office::metadata`]
+    /// would return for that file.
+    pub fn metadata_many(&self, paths: &[PathBuf]) -> Result<Value, OfficeError> {
+        if paths.is_empty() {
+            return Err(OfficeError::usage("at least one document is required"));
+        }
+        let mut counted = 0;
+        let mut failed = 0;
+        let mut results = Vec::with_capacity(paths.len());
+        for path in paths {
+            match self.metadata(path) {
+                Ok(report) => {
+                    counted += 1;
+                    results.push(json!({
+                        "source": path.display().to_string(),
+                        "ok": true,
+                        "kind": report.get("kind").cloned().unwrap_or(Value::Null),
+                        "metadata": report.get("metadata").cloned().unwrap_or(Value::Null),
+                    }));
+                }
+                Err(error) => {
+                    failed += 1;
+                    results.push(json!({
+                        "source": path.display().to_string(),
+                        "ok": false,
+                        "code": error.code(),
+                        "error": error.message(),
+                    }));
+                }
+            }
+        }
+        Ok(json!({ "counted": counted, "failed": failed, "results": results }))
+    }
+
     /// Projects one document into its navigable outline.
     ///
     /// Each family answers with the structure it really owns: a word document

@@ -20,7 +20,7 @@ open-office formats
 | `inspect <file>...` | `--checks <list>` (optional) | Dispatches to the owning engine; one path returns the single envelope, more paths return a batch report. `--checks` is a comma-separated list of rule-check names and applies to Word, Excel and presentation inputs. |
 | `stats <file>...` | none | Lightweight per-family statistics; one path returns the single envelope, more paths return a batch report. |
 | `totals <file>...` | none | Aggregates the statistics of every input into one suite-level report with per-family sums; a failing document is counted in `failed` and does not stop the batch. |
-| `metadata <file>` | exactly one path | Reports the descriptive metadata the owning engine stores: `{ title }` for word, workbook and presentation files, and the whole PDF information dictionary (`title`, `author`, `subject`, `keywords`, `creator`, `producer`) for PDFs. Nothing is derived, so a missing field is `null`. |
+| `metadata <file>...` | one or more paths | Reports the descriptive metadata the owning engine stores: `{ title }` for word, workbook and presentation files, and the whole PDF information dictionary (`title`, `author`, `subject`, `keywords`, `creator`, `producer`) for PDFs. Nothing is derived, so a missing field is `null`. With several paths it reports a best-effort batch (`counted`, `failed`, `results`) instead of stopping at the first failure. |
 | `outline <file>...` | `--points` (presentations), `--depth <n>` (word and PDF) | `--points` is accepted only for presentations. `--depth` keeps word headings and PDF bookmarks at that level or shallower and is rejected for other families. One path returns the single envelope, more paths return a batch report. |
 | `compare <left> <right>` | exactly two paths, optional `--ignore-case` / `-i` | Outline-level diff of two documents of the same family: word heading titles, workbook sheet names, slide titles or PDF bookmark titles, aligned in document order into `added`, `removed`, `renamed` and `moved` sections. `--ignore-case` folds case, so a pure case change is not a rename. Different families fail with `kind-mismatch`. |
 | `search <file>...` | `--text <query>` / `-t` (required), `--limit <n>` (optional) | Case-sensitive in every family. Default limit is 100, clamped to 1-500. One path returns the single envelope, more paths return a batch report. |
@@ -185,6 +185,15 @@ Word, workbook and presentation engines keep a title only, so their `metadata`
 holds `{ "title": ... }` and nothing else. PDFs answer with the information
 dictionary. Missing values stay `null`; nothing is synthesized from the file
 name or the first heading.
+
+With several paths, `metadata` switches to a best-effort batch report:
+
+```json
+{ "counted": 2, "failed": 1, "results": [ { "source": "brief.oword", "ok": true, "kind": "word", "metadata": { "title": "Brief" } }, { "source": "missing.oword", "ok": false, "code": "io/not-found", "error": "..." } ] }
+```
+
+Each input is attempted in order; a failing document contributes only its
+stable `code` and `error`, and the command exits `1` after printing the report.
 
 With more than one path, `inspect` reports every input in order and does not
 stop at the first failure. Successful entries keep the full per-family

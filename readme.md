@@ -81,7 +81,7 @@ Supported formats:
 - `open-office formats` - the import and export matrix of the binary you installed.
 - `open-office capabilities` - the capability matrix reported by each bundled engine.
 - `open-office totals a.docx b.pdf c.xlsx` - one aggregated count across any mix of documents.
-- `open-office metadata paper.pdf` - the information dictionary a PDF actually carries.
+- `open-office metadata paper.pdf` - the information dictionary a PDF actually carries, or titles across several documents.
 - `open-office compare draft.docx final.docx` - sections added, removed, renamed or moved between two same-family outlines.
 - `open-office compare draft.docx final.docx --ignore-case` - treat titles that differ only by case as the same section.
 - `open-office replace notes.md --find Acme --with Globex` - find-and-replace saved back in place.

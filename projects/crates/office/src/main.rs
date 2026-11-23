@@ -485,14 +485,13 @@ fn print_json(value: &Value) -> Result<(), OfficeError> {
     Ok(())
 }
 
-/// Parses `metadata` and reports the family metadata of one document.
+/// Parses `metadata` and reports the family metadata of one or more documents.
 fn metadata(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
     let paths = document_paths(arguments, "a document path is required")?;
-    let [path] = paths.as_slice()
-    else {
-        return Err(OfficeError::usage("`metadata` takes exactly one document path"));
-    };
-    print_json(&office.metadata(path)?)
+    if paths.len() == 1 {
+        return print_json(&office.metadata(&paths[0])?);
+    }
+    print_json(&office.metadata_many(&paths)?)
 }
 
 fn usage() {
@@ -506,7 +505,7 @@ fn usage() {
          \x20 open-office inspect <file>... [--checks <list>]\n\
          \x20 open-office stats <file>...\n\
          \x20 open-office totals <file>...\n\
-         \x20 open-office metadata <file>\n\
+         \x20 open-office metadata <file>...\n\
          \x20 open-office outline <file>... [--points] [--depth <n>]\n\
          \x20 open-office compare <left> <right> [--ignore-case]\n\
          \x20 open-office search <file>... --text <query> [--limit <n>]\n\
