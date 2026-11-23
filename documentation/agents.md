@@ -20,6 +20,7 @@ open-office formats
 | `inspect <file>...` | `--checks <list>` (optional) | Dispatches to the owning engine; one path returns the single envelope, more paths return a batch report. `--checks` is a comma-separated list of rule-check names and applies to Word, Excel and presentation inputs. |
 | `stats <file>...` | none | Lightweight per-family statistics; one path returns the single envelope, more paths return a batch report. |
 | `totals <file>...` | none | Aggregates the statistics of every input into one suite-level report with per-family sums; a failing document is counted in `failed` and does not stop the batch. |
+| `metadata <file>` | exactly one path | Reports the descriptive metadata the owning engine stores: `{ title }` for word, workbook and presentation files, and the whole PDF information dictionary (`title`, `author`, `subject`, `keywords`, `creator`, `producer`) for PDFs. Nothing is derived, so a missing field is `null`. |
 | `outline <file>...` | `--points` (presentations), `--depth <n>` (word and PDF) | `--points` is accepted only for presentations. `--depth` keeps word headings and PDF bookmarks at that level or shallower and is rejected for other families. One path returns the single envelope, more paths return a batch report. |
 | `compare <left> <right>` | exactly two paths, optional `--ignore-case` / `-i` | Outline-level diff of two documents of the same family: word heading titles, workbook sheet names, slide titles or PDF bookmark titles, aligned in document order into `added`, `removed`, `renamed` and `moved` sections. `--ignore-case` folds case, so a pure case change is not a rename. Different families fail with `kind-mismatch`. |
 | `search <file>...` | `--text <query>` / `-t` (required), `--limit <n>` (optional) | Case-sensitive in every family. Default limit is 100, clamped to 1-500. One path returns the single envelope, more paths return a batch report. |
@@ -72,7 +73,7 @@ when the detector quoted some.
 ```json
 {
   "engine": { "package": "open-office", "version": "0.1.0" },
-  "commands": ["probe", "inspect", "convert", "open", "formats", "stats", "totals", "outline", "compare", "search", "replace", "render", "capabilities", "version"],
+  "commands": ["probe", "inspect", "convert", "open", "formats", "stats", "totals", "metadata", "outline", "compare", "search", "replace", "render", "capabilities", "version"],
   "modules": {
     "word": {},
     "excel": {},
@@ -171,6 +172,19 @@ tables, words and characters, workbooks add up sheets and cells, presentations
 add up slides and PDFs add up pages. `families` always lists all four families,
 even the empty ones. A failing document appears only in `results` with its
 stable `code` and `error`, and the command exits `1` after printing the report.
+
+### `metadata`
+
+`metadata` reads one file and keeps the fields its family actually stores:
+
+```json
+{ "kind": "pdf", "path": "paper.pdf", "metadata": { "title": "Paper", "author": null, "subject": null, "keywords": null, "creator": null, "producer": "OpenPDF" } }
+```
+
+Word, workbook and presentation engines keep a title only, so their `metadata`
+holds `{ "title": ... }` and nothing else. PDFs answer with the information
+dictionary. Missing values stay `null`; nothing is synthesized from the file
+name or the first heading.
 
 With more than one path, `inspect` reports every input in order and does not
 stop at the first failure. Successful entries keep the full per-family
@@ -386,7 +400,7 @@ Routing is by lowercased extension:
 
 `.project`, `.oppt` and `.opresent` open as native presentations; every other presentation extension is imported as PresentationML and reports import losses. Files without an extension fail with `missing-extension`; any other extension fails with `unsupported-extension`.
 
-After routing, `inspect`, `stats`, `outline`, `search`, `render` and `convert` read the whole file and cross-check the detected container against the route. A mismatch is refused with the probe evidence. When the bytes do not resolve a family, the extension route stands. `probe` performs no routing and never opens the document.
+After routing, `inspect`, `stats`, `totals`, `metadata`, `outline`, `search`, `render` and `convert` read the whole file and cross-check the detected container against the route. A mismatch is refused with the probe evidence. When the bytes do not resolve a family, the extension route stands. `probe` performs no routing and never opens the document.
 
 ## Guardrails
 

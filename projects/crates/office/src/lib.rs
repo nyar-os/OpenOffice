@@ -185,7 +185,7 @@ impl Office {
     pub fn capabilities(&self) -> Value {
         json!({
             "engine": { "package": "open-office", "version": VERSION },
-            "commands": ["probe", "inspect", "convert", "open", "formats", "stats", "totals", "outline", "compare", "search", "replace", "render", "capabilities", "version"],
+            "commands": ["probe", "inspect", "convert", "open", "formats", "stats", "totals", "metadata", "outline", "compare", "search", "replace", "render", "capabilities", "version"],
             "modules": {
                 "word": open_word_document::capabilities(),
                 "excel": open_excel_workbook::capabilities(),
@@ -372,6 +372,50 @@ impl Office {
             "kind": kind.label(),
             "path": path.display().to_string(),
             "stats": stats,
+        }))
+    }
+
+    /// Reports the descriptive metadata each family actually stores.
+    ///
+    /// Word, workbook and presentation engines keep only a document title, so
+    /// they answer with `{ title }`; a PDF answers with its whole information
+    /// dictionary (`title`, `author`, `subject`, `keywords`, `creator`,
+    /// `producer`). Nothing is derived or defaulted, so a missing field is
+    /// `null` instead of an invented value.
+    pub fn metadata(&self, path: &Path) -> Result<Value, OfficeError> {
+        let kind = Kind::of_path(path)?;
+        verify_container(path, kind)?;
+        let metadata = match kind {
+            Kind::Word => {
+                let opened = open_word_document::open(path).map_err(runtime)?;
+                let handle = handle_of(&opened)?;
+                let outcome = open_word_document::summary(handle);
+                let _ = open_word_document::close(handle);
+                let summary = outcome.map_err(runtime)?;
+                json!({ "title": summary.get("title").cloned().unwrap_or(Value::Null) })
+            }
+            Kind::Excel => {
+                let opened = open_excel_workbook::open(path).map_err(runtime)?;
+                let handle = handle_of(&opened)?;
+                let outcome = open_excel_workbook::summary(handle);
+                let _ = open_excel_workbook::close(handle);
+                let summary = outcome.map_err(runtime)?;
+                json!({ "title": summary.get("title").cloned().unwrap_or(Value::Null) })
+            }
+            Kind::Presentation => {
+                let loaded = load_deck(path)?;
+                let summary = open_ppt_deck::summary(&loaded.deck);
+                json!({ "title": summary.get("title").cloned().unwrap_or(Value::Null) })
+            }
+            Kind::Pdf => {
+                let report = open_pdf_core::inspect(path).map_err(runtime)?;
+                serde_json::to_value(&report.metadata).map_err(runtime)?
+            }
+        };
+        Ok(json!({
+            "kind": kind.label(),
+            "path": path.display().to_string(),
+            "metadata": metadata,
         }))
     }
 

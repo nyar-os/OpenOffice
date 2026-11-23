@@ -51,6 +51,7 @@ You can also place a prebuilt `open-office` binary on your `PATH`. Source builds
 - **Guardrails by default.** Existing outputs require `--overwrite`, `--points` is accepted only for presentations, `--pages` only for PDF text, and bytes that contradict the extension are rejected.
 - **Batch without surprises.** Multiple inputs convert into an output directory named after each source stem, and `stats`, `inspect`, `outline`, `search`, `replace`, `totals` and `probe` accept several files at once; one failure does not stop the rest.
 - **Suite-level totals.** `totals` sums the engine's own statistics across any mix of documents — words and pages and slides and cells in one call.
+- **Metadata without guesswork.** `metadata` reports the title each family stores, or the whole PDF information dictionary, keeping missing fields `null` instead of inventing them.
 - **Outline-level diff.** `compare` aligns the sections of two same-family documents and reports what was added, removed, renamed or moved.
 - **Find-and-replace across files.** `replace` runs the owning engine's own replacement across word documents, workbooks and presentations, and saves each changed document back in place; a query that matches nothing leaves the file untouched, and `--dry-run` counts the matches without writing.
 - **Stable locations.** Search hits carry the owning engine's own locators, and batch failures carry stable error codes.
@@ -80,6 +81,7 @@ Supported formats:
 - `open-office formats` - the import and export matrix of the binary you installed.
 - `open-office capabilities` - the capability matrix reported by each bundled engine.
 - `open-office totals a.docx b.pdf c.xlsx` - one aggregated count across any mix of documents.
+- `open-office metadata paper.pdf` - the information dictionary a PDF actually carries.
 - `open-office compare draft.docx final.docx` - sections added, removed, renamed or moved between two same-family outlines.
 - `open-office compare draft.docx final.docx --ignore-case` - treat titles that differ only by case as the same section.
 - `open-office replace notes.md --find Acme --with Globex` - find-and-replace saved back in place.

@@ -46,6 +46,7 @@ fn run(arguments: &[String]) -> Result<(), OfficeError> {
         "inspect" => inspect(&office, rest),
         "stats" => stats(&office, rest),
         "totals" => totals(&office, rest),
+        "metadata" => metadata(&office, rest),
         "outline" => outline(&office, rest),
         "compare" => compare(&office, rest),
         "search" => search(&office, rest),
@@ -484,6 +485,16 @@ fn print_json(value: &Value) -> Result<(), OfficeError> {
     Ok(())
 }
 
+/// Parses `metadata` and reports the family metadata of one document.
+fn metadata(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
+    let paths = document_paths(arguments, "a document path is required")?;
+    let [path] = paths.as_slice()
+    else {
+        return Err(OfficeError::usage("`metadata` takes exactly one document path"));
+    };
+    print_json(&office.metadata(path)?)
+}
+
 fn usage() {
     println!(
         "open-office {VERSION}\n\
@@ -495,6 +506,7 @@ fn usage() {
          \x20 open-office inspect <file>... [--checks <list>]\n\
          \x20 open-office stats <file>...\n\
          \x20 open-office totals <file>...\n\
+         \x20 open-office metadata <file>\n\
          \x20 open-office outline <file>... [--points] [--depth <n>]\n\
          \x20 open-office compare <left> <right> [--ignore-case]\n\
          \x20 open-office search <file>... --text <query> [--limit <n>]\n\
@@ -517,6 +529,7 @@ fn usage() {
          \x20 open-office stats report.docx\n\
          \x20 open-office stats a.docx b.pdf c.xlsx\n\
          \x20 open-office totals a.docx b.pdf c.xlsx deck.pptx\n\
+         \x20 open-office metadata report.docx\n\
          \x20 open-office outline report.docx\n\
          \x20 open-office outline deck.pptx --points\n\
          \x20 open-office outline report.docx --depth 2\n\

@@ -1103,6 +1103,61 @@ fn compare_reports_sections_that_only_moved() {
 }
 
 #[test]
+fn metadata_reports_the_title_each_family_stores() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-metadata-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+
+    let word = dir.join("brief.oword");
+    let created = open_word_document::create(&json!({ "title": "Brief" })).expect("create word");
+    let handle = created["handle"].as_u64().expect("word handle");
+    open_word_document::save(handle, &word, true).expect("save word");
+    let _ = open_word_document::close(handle);
+    let report = office.metadata(&word).expect("word metadata");
+    assert_eq!(report["kind"], json!("word"));
+    assert_eq!(report["metadata"]["title"], json!("Brief"));
+
+    let sheet = dir.join("ledger.oexcel");
+    let created = open_excel_workbook::create(&json!({ "title": "Ledger" })).expect("create workbook");
+    let handle = created["handle"].as_u64().expect("workbook handle");
+    open_excel_workbook::save(handle, &sheet, true).expect("save workbook");
+    let _ = open_excel_workbook::close(handle);
+    let report = office.metadata(&sheet).expect("workbook metadata");
+    assert_eq!(report["kind"], json!("excel"));
+    assert_eq!(report["metadata"]["title"], json!("Ledger"));
+
+    let deck = open_ppt_deck::create(open_ppt_deck::CreateRequest {
+        title: Some("Roadmap".to_owned()),
+        size: None,
+        theme: None,
+        slides: vec!["Intro".to_owned()],
+    })
+    .expect("create deck");
+    let slides = dir.join("roadmap.project");
+    open_ppt_deck::save(&deck, &slides, true).expect("save deck");
+    let report = office.metadata(&slides).expect("presentation metadata");
+    assert_eq!(report["kind"], json!("presentation"));
+    assert_eq!(report["metadata"]["title"], json!("Roadmap"));
+
+    let paper = dir.join("paper.pdf");
+    let request = open_pdf_core::CreateRequest {
+        out: paper.clone(),
+        title: Some("Paper".to_owned()),
+        pages: vec!["One".to_owned()],
+        overwrite: true,
+        ..Default::default()
+    };
+    open_pdf_core::create(&request).expect("create pdf");
+    let report = office.metadata(&paper).expect("pdf metadata");
+    assert_eq!(report["kind"], json!("pdf"));
+    assert_eq!(report["metadata"]["title"], json!("Paper"));
+    assert_eq!(report["metadata"]["producer"], json!("OpenPDF"));
+
+    assert!(office.metadata(&dir.join("missing.oword")).is_err());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn replace_dry_run_counts_matches_without_writing_any_family() {
     let office = Office::new();
     let dir = std::env::temp_dir().join(format!("open-office-replace-dry-{}", std::process::id()));
