@@ -711,18 +711,68 @@ fn compare_can_limit_itself_to_shallow_headings() {
     let right = dir.join("final.md");
     fs::write(&right, b"# Intro\n\n## Summary\n\n### Deep\n").expect("write final");
 
-    let shallow = office.compare_at(&left, &right, false, Some(1)).expect("shallow compare");
+    let shallow = office.compare_at(&left, &right, false, Some(1), false).expect("shallow compare");
     assert_eq!(shallow["depth"], json!(1));
     assert_eq!(shallow["left"]["sections"], json!(1));
     assert_eq!(shallow["right"]["sections"], json!(1));
     assert_eq!(shallow["identical"], json!(true), "the deeper rename is below the depth");
 
-    let deeper = office.compare_at(&left, &right, false, Some(2)).expect("deeper compare");
+    let deeper = office.compare_at(&left, &right, false, Some(2), false).expect("deeper compare");
     assert_eq!(deeper["left"]["sections"], json!(2));
     assert_eq!(deeper["renamed"], json!([{ "from": "Details", "to": "Summary" }]));
 
-    let zero = office.compare_at(&left, &right, false, Some(0)).expect_err("depth zero");
+    let zero = office.compare_at(&left, &right, false, Some(0), false).expect_err("depth zero");
     assert_eq!(zero.code(), "invalid-depth");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn compare_expands_presentation_points_when_asked() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-compare-points-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let build = |name: &str, point: &str| {
+        let mut deck = open_ppt_deck::create(open_ppt_deck::CreateRequest {
+            title: Some("Points".to_owned()),
+            size: None,
+            theme: None,
+            slides: vec!["Plan".to_owned()],
+        })
+        .expect("create deck");
+        let slide = open_ppt_deck::summary(&deck)["slides"][0]["id"].as_str().expect("slide id").to_owned();
+        open_ppt_deck::edit::edit(
+            &mut deck,
+            &json!({ "operations": [{
+                "op": "text.add",
+                "slideId": slide,
+                "text": { "paragraphs": [{ "runs": [{ "text": point }] }] },
+            }] }),
+        )
+        .expect("add point");
+        let path = dir.join(name);
+        open_ppt_deck::save(&deck, &path, true).expect("save deck");
+        path
+    };
+    let before = build("before.project", "Alpha");
+    let after = build("after.project", "Beta");
+
+    let titles = office.compare_at(&before, &after, false, None, false).expect("title compare");
+    assert_eq!(titles["points"], json!(false));
+    assert_eq!(titles["identical"], json!(true), "slide titles alone are unchanged");
+
+    let points = office.compare_at(&before, &after, false, None, true).expect("point compare");
+    assert_eq!(points["points"], json!(true));
+    assert_eq!(points["left"]["sections"], json!(1));
+    assert_eq!(
+        points["renamed"],
+        json!([{ "from": "Plan · Alpha", "to": "Plan · Beta" }]),
+        "body points participate in the diff"
+    );
+
+    let word = dir.join("plain.md");
+    fs::write(&word, b"# Plan\n").expect("write word");
+    let unsupported = office.compare_at(&word, &word, false, None, true).expect_err("points on word");
+    assert_eq!(unsupported.code(), "unsupported-option");
     let _ = fs::remove_dir_all(&dir);
 }
 

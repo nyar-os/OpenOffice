@@ -588,7 +588,7 @@ impl Office {
     /// pure case change is not reported as a rename. Added and removed titles
     /// keep their original spelling from the side they came from.
     pub fn compare_with(&self, left: &Path, right: &Path, ignore_case: bool) -> Result<Value, OfficeError> {
-        self.compare_at(left, right, ignore_case, None)
+        self.compare_at(left, right, ignore_case, None, false)
     }
 
     /// Compares two same-family outlines at an optional heading depth.
@@ -596,13 +596,16 @@ impl Office {
     /// `depth` keeps only word headings and PDF bookmarks at that level or
     /// shallower on both sides before diffing, so a deeper change is invisible
     /// to a shallow comparison. Workbooks and presentations reject a depth the
-    /// same way [`Office::outline`] does.
+    /// same way [`Office::outline`] does. With `points`, presentation slides are
+    /// expanded into one entry per talking point so body changes show up as
+    /// added, removed or renamed entries; other families reject the option.
     pub fn compare_at(
         &self,
         left: &Path,
         right: &Path,
         ignore_case: bool,
         depth: Option<u8>,
+        points: bool,
     ) -> Result<Value, OfficeError> {
         let left_kind = Kind::of_path(left)?;
         let right_kind = Kind::of_path(right)?;
@@ -614,8 +617,11 @@ impl Office {
             ))
             .with_code("kind-mismatch"));
         }
-        let left_sections = self.outline_sections(left, depth)?;
-        let right_sections = self.outline_sections(right, depth)?;
+        if points && left_kind != Kind::Presentation {
+            return Err(OfficeError::usage("`--points` only applies to presentations").with_code("unsupported-option"));
+        }
+        let left_sections = self.outline_sections(left, depth, points)?;
+        let right_sections = self.outline_sections(right, depth, points)?;
         let (added, removed, renamed, moved) = diff_sections(&left_sections, &right_sections, ignore_case);
         Ok(json!({
             "kind": left_kind.label(),
@@ -623,6 +629,7 @@ impl Office {
             "right": { "path": right.display().to_string(), "sections": right_sections.len() },
             "ignoreCase": ignore_case,
             "depth": depth,
+            "points": points,
             "identical": added.is_empty() && removed.is_empty() && renamed.is_empty() && moved.is_empty(),
             "added": added,
             "removed": removed,
@@ -632,8 +639,38 @@ impl Office {
     }
 
     /// Collects the outline titles of one document, in document order.
-    fn outline_sections(&self, path: &Path, depth: Option<u8>) -> Result<Vec<String>, OfficeError> {
-        let report = self.outline(path, false, depth)?;
+    ///
+    /// With `points`, a presentation contributes one `Title · point` entry per
+    /// slide point (or the title alone when the slide has no points), so point
+    /// changes participate in the diff.
+    fn outline_sections(&self, path: &Path, depth: Option<u8>, points: bool) -> Result<Vec<String>, OfficeError> {
+        let report = self.outline(path, points, depth)?;
+        if points {
+            let mut entries = Vec::new();
+            if let Some(slides) = report.pointer("/outline/slides").and_then(Value::as_array) {
+                for slide in slides {
+                    let title = slide.get("title").and_then(Value::as_str).unwrap_or("");
+                    let slide_points = slide.get("points").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
+                    if slide_points.is_empty() {
+                        entries.push(title.to_owned());
+                        continue;
+                    }
+                    for point in slide_points {
+                        if let Some(point) = point.as_str() {
+                            entries.push(if title.is_empty() {
+                                point.to_owned()
+                            }
+                            else {
+                                format!("{title} · {point}")
+                            });
+                        }
+                    }
+                }
+            }
+            if !entries.is_empty() {
+                return Ok(entries);
+            }
+        }
         let mut titles = Vec::new();
         collect_titles(&report["outline"], &mut titles);
         Ok(titles)
