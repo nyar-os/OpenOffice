@@ -157,6 +157,17 @@ pub struct RenderOptions {
     pub overwrite: bool,
 }
 
+/// Options that narrow one `replace` request.
+///
+/// Defaults replace case-sensitively and apply every match the document holds.
+#[derive(Debug, Clone, Default)]
+pub struct ReplaceOptions {
+    /// Matches `find` regardless of case; the suite matches case by default.
+    pub ignore_case: bool,
+    /// Caps the replacements: per document for Word, per sheet for workbooks.
+    pub limit: Option<u32>,
+}
+
 /// The four-engine inspector and converter.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Office;
@@ -171,7 +182,7 @@ impl Office {
     pub fn capabilities(&self) -> Value {
         json!({
             "engine": { "package": "open-office", "version": VERSION },
-            "commands": ["probe", "inspect", "convert", "open", "formats", "stats", "outline", "search", "render", "capabilities", "version"],
+            "commands": ["probe", "inspect", "convert", "open", "formats", "stats", "outline", "search", "replace", "render", "capabilities", "version"],
             "modules": {
                 "word": open_word_document::capabilities(),
                 "excel": open_excel_workbook::capabilities(),
@@ -557,6 +568,175 @@ impl Office {
             }
         }
         Ok(json!({ "query": query, "searched": searched, "failed": failed, "results": results }))
+    }
+
+    /// Replaces one query with new text inside one document, saved in place.
+    ///
+    /// The request reaches the owning engine's own find-and-replace, so Word
+    /// covers section titles, paragraphs, list items and table cells while
+    /// workbooks cover the text cells of every sheet that holds content.
+    /// Matching is case-sensitive unless `ignore_case` is set, mirroring the
+    /// suite's case-sensitive `search`. A document with no match is reported
+    /// with `replaced: 0` and its file is left untouched; only a document that
+    /// changed is written back in its own format. Presentations and PDFs are
+    /// refused because neither engine wires a replacement route in this build.
+    pub fn replace(&self, path: &Path, find: &str, with: &str, options: &ReplaceOptions) -> Result<Value, OfficeError> {
+        if find.is_empty() {
+            return Err(OfficeError::usage("`--find` needs a non-empty query").with_code("invalid-query"));
+        }
+        let kind = Kind::of_path(path)?;
+        verify_container(path, kind)?;
+        let extension = path.extension().and_then(|value| value.to_str()).unwrap_or_default().to_ascii_lowercase();
+        let match_case = !options.ignore_case;
+        let (replaced, revision, saved) = match kind {
+            Kind::Word => {
+                let opened = open_word_document::open(path).map_err(runtime)?;
+                let handle = handle_of(&opened)?;
+                let mut request = json!({ "find": find, "replace": with, "caseSensitive": match_case });
+                if let Some(limit) = options.limit {
+                    request["limit"] = json!(limit);
+                }
+                let outcome = open_word_document::replace(handle, &request).map_err(replace_failed)?;
+                let replaced = outcome.get("replaced").and_then(Value::as_u64).unwrap_or_default();
+                let revision = outcome.get("revision").cloned().unwrap_or(Value::Null);
+                let saved = if replaced == 0 {
+                    Value::Null
+                }
+                else {
+                    let (format, report) = if extension == "oword" {
+                        ("oword".to_owned(), open_word_document::save(handle, path, true).map_err(replace_failed)?)
+                    }
+                    else {
+                        let format = word_persist_format(&extension).ok_or_else(|| unsupported_extension_route(&extension))?;
+                        (format.to_owned(), open_word_document::export(handle, format, path, true).map_err(replace_failed)?)
+                    };
+                    json!({ "format": format, "report": report })
+                };
+                let _ = open_word_document::close(handle);
+                (replaced, revision, saved)
+            }
+            Kind::Excel => {
+                let opened = open_excel_workbook::open(path).map_err(runtime)?;
+                let handle = handle_of(&opened)?;
+                let summary = open_excel_workbook::summary(handle).map_err(replace_failed)?;
+                let revision = summary.get("revision").cloned().unwrap_or(Value::Null);
+                let mut operations = Vec::new();
+                for sheet in summary.get("sheets").and_then(Value::as_array).cloned().unwrap_or_default() {
+                    if sheet.get("cells").and_then(Value::as_u64).unwrap_or_default() == 0 {
+                        continue;
+                    }
+                    let mut operation = json!({
+                        "op": "cell.replaceText",
+                        "sheet": sheet.get("name").cloned().unwrap_or(Value::Null),
+                        "find": find,
+                        "replace": with,
+                        "matchCase": match_case,
+                    });
+                    if let Some(limit) = options.limit {
+                        operation["limit"] = json!(limit);
+                    }
+                    operations.push(operation);
+                }
+                let (replaced, revision, saved) = if operations.is_empty() {
+                    (0, revision, Value::Null)
+                }
+                else {
+                    let outcome =
+                        open_excel_workbook::edit(handle, &json!({ "operations": operations })).map_err(replace_failed)?;
+                    let replaced = outcome.get("replacements").and_then(Value::as_u64).unwrap_or_default();
+                    let revision = outcome.get("revision").cloned().unwrap_or(revision);
+                    let saved = if replaced == 0 {
+                        Value::Null
+                    }
+                    else {
+                        let (format, report) = if extension == "oexcel" {
+                            ("oexcel".to_owned(), open_excel_workbook::save(handle, path, true).map_err(replace_failed)?)
+                        }
+                        else {
+                            let format =
+                                excel_persist_format(&extension).ok_or_else(|| unsupported_extension_route(&extension))?;
+                            (format.to_owned(), open_excel_workbook::export(handle, format, path, true).map_err(replace_failed)?)
+                        };
+                        json!({ "format": format, "report": report })
+                    };
+                    (replaced, revision, saved)
+                };
+                let _ = open_excel_workbook::close(handle);
+                (replaced, revision, saved)
+            }
+            Kind::Presentation | Kind::Pdf => {
+                return Err(OfficeError::usage(format!(
+                    "`replace` supports word documents and workbooks; {} has no find-and-replace route in this build",
+                    kind.label()
+                ))
+                .with_code("unsupported-target"));
+            }
+        };
+        Ok(json!({
+            "kind": kind.label(),
+            "path": path.display().to_string(),
+            "find": find,
+            "replace": with,
+            "matchCase": match_case,
+            "replaced": replaced,
+            "revision": revision,
+            "saved": saved,
+        }))
+    }
+
+    /// Replaces one query across many documents in input order.
+    ///
+    /// A failing document does not stop the batch: each entry carries `ok` and
+    /// either the family `kind` with its `replaced` count and `revision` or the
+    /// stable `code` and `error` message. Options apply to every document, and
+    /// each document is saved in place exactly as single-document
+    /// [`Office::replace`] does.
+    pub fn replace_many(
+        &self,
+        inputs: &[PathBuf],
+        find: &str,
+        with: &str,
+        options: &ReplaceOptions,
+    ) -> Result<Value, OfficeError> {
+        if inputs.is_empty() {
+            return Err(OfficeError::usage("at least one document is required"));
+        }
+        if find.is_empty() {
+            return Err(OfficeError::usage("`--find` needs a non-empty query").with_code("invalid-query"));
+        }
+        let mut updated = 0;
+        let mut failed = 0;
+        let mut results = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            match self.replace(input, find, with, options) {
+                Ok(report) => {
+                    updated += 1;
+                    results.push(json!({
+                        "source": input.display().to_string(),
+                        "ok": true,
+                        "kind": report.get("kind").cloned().unwrap_or(Value::Null),
+                        "replaced": report.get("replaced").cloned().unwrap_or(Value::Null),
+                        "revision": report.get("revision").cloned().unwrap_or(Value::Null),
+                    }));
+                }
+                Err(error) => {
+                    failed += 1;
+                    results.push(json!({
+                        "source": input.display().to_string(),
+                        "ok": false,
+                        "code": error.code(),
+                        "error": error.message(),
+                    }));
+                }
+            }
+        }
+        Ok(json!({
+            "find": find,
+            "replace": with,
+            "updated": updated,
+            "failed": failed,
+            "results": results,
+        }))
     }
 
     /// Renders a workbook sheet or presentation slides to SVG.
@@ -1390,5 +1570,37 @@ fn runtime(error: impl fmt::Display) -> OfficeError {
 /// A failure raised by an engine while converting, with its stable batch code.
 fn conversion(error: impl fmt::Display) -> OfficeError {
     OfficeError::runtime(error.to_string()).with_code("conversion-failed")
+}
+
+/// A failure raised by an engine while replacing or saving text back in place.
+fn replace_failed(error: impl fmt::Display) -> OfficeError {
+    OfficeError::runtime(error.to_string()).with_code("replace-failed")
+}
+
+/// The export route that writes a word document back under its own extension.
+fn word_persist_format(extension: &str) -> Option<&'static str> {
+    match extension {
+        "docx" | "docm" => Some("docx"),
+        "rtf" => Some("rtf"),
+        "txt" => Some("txt"),
+        "md" | "markdown" => Some("md"),
+        "html" | "htm" => Some("html"),
+        _ => None,
+    }
+}
+
+/// The export route that writes a workbook back under its own extension.
+fn excel_persist_format(extension: &str) -> Option<&'static str> {
+    match extension {
+        "xlsx" | "xlsm" => Some("xlsx"),
+        "csv" => Some("csv"),
+        "tsv" => Some("tsv"),
+        _ => None,
+    }
+}
+
+/// A routed extension that has no in-place replacement write-back route.
+fn unsupported_extension_route(extension: &str) -> OfficeError {
+    OfficeError::usage(format!("`.{extension}` has no in-place replacement route in this build")).with_code("unsupported-target")
 }
 

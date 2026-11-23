@@ -21,6 +21,7 @@ open-office formats
 | `stats <file>...` | none | Lightweight per-family statistics; one path returns the single envelope, more paths return a batch report. |
 | `outline <file>...` | `--points` (presentations), `--depth <n>` (word and PDF) | `--points` is accepted only for presentations. `--depth` keeps word headings and PDF bookmarks at that level or shallower and is rejected for other families. One path returns the single envelope, more paths return a batch report. |
 | `search <file>...` | `--text <query>` / `-t` (required), `--limit <n>` (optional) | Case-sensitive in every family. Default limit is 100, clamped to 1-500. One path returns the single envelope, more paths return a batch report. |
+| `replace <file>...` | `--find <query>` / `-f` (required), `--with <replacement>` / `-w` (required), `--ignore-case` / `-i`, `--limit <n>` (optional) | Find-and-replace saved in place for word documents and workbooks; presentations and PDFs fail with `unsupported-target`. Matching is case-sensitive unless `--ignore-case`. One path returns the single envelope, more paths return a batch report. |
 | `render <file>...` | `--sheet <name>` / `-s` (workbooks), `--page <n>` / `-p` (presentations), `--out <file>` / `-o`, `--out-dir <dir>`, `--overwrite` | SVG only. `--out` needs exactly one page; `--out-dir` writes `page-<n>.svg` per page. Several paths require `--out-dir` and get one subdirectory per source stem. |
 | `formats` | none | Import and export matrix. |
 | `capabilities` | none | Capability matrix. |
@@ -33,7 +34,7 @@ Unknown options are usage errors. `convert` lowercases `--format`, and batch tar
 
 `open` is a routing convenience, not an editor. It checks the extension and that the file exists, then hands the file to the platform. A missing opener or a non-zero exit reports `open-failed`; use the individual product CLI (`open-word open`, `open-excel open`, `open-ppt open`, `open-pdf open`) when the product GUI or reader should handle the file.
 
-Exit codes: `0` success, `2` usage error, `1` runtime error. A batch conversion, a multi-file `probe`, `stats`, `outline`, `search` or `inspect` prints its JSON report and then exits `1` when `failed` is greater than zero.
+Exit codes: `0` success, `2` usage error, `1` runtime error. A batch conversion, a multi-file `probe`, `stats`, `outline`, `search`, `replace` or `inspect` prints its JSON report and then exits `1` when `failed` is greater than zero.
 
 ## Report envelopes
 
@@ -69,7 +70,7 @@ when the detector quoted some.
 ```json
 {
   "engine": { "package": "open-office", "version": "0.1.0" },
-  "commands": ["probe", "inspect", "convert", "formats", "stats", "outline", "search", "render", "capabilities", "version"],
+  "commands": ["probe", "inspect", "convert", "open", "formats", "stats", "outline", "search", "replace", "render", "capabilities", "version"],
   "modules": {
     "word": {},
     "excel": {},
@@ -211,6 +212,29 @@ With more than one path, `search` applies the same query and limit to every docu
 
 where `search` is the single-document envelope above. `limit` applies per document, not to the batch.
 
+### `replace`
+
+```json
+{
+  "kind": "word",
+  "path": "notes.md",
+  "find": "Acme",
+  "replace": "Globex",
+  "matchCase": true,
+  "replaced": 2,
+  "revision": 2,
+  "saved": { "format": "md", "report": {} }
+}
+```
+
+The request reaches the owning engine's own find-and-replace: Word covers section titles, paragraphs, list items and table cells; workbooks cover the text cells of every sheet that holds content (formulas are left alone). `--limit` caps replacements per document for Word and per sheet for workbooks. Only a document that changed is written back, in its own format (`oword`/`oexcel` projects save natively, every other extension re-exports through the engine's export route); a document with no match reports `replaced: 0` and `saved: null` and its file is untouched. Presentations and PDFs fail with `unsupported-target`.
+
+With more than one path, `replace` returns
+
+`{ find, replace, updated, failed, results: [{ source, ok, kind, replaced, revision } | { source, ok: false, code, error }] }`
+
+in input order and exits non-zero when any document failed.
+
 ### `render`
 
 ```json
@@ -294,9 +318,10 @@ Codes are exposed to library callers and in batch `results[].code`. The CLI itse
 | `unsupported-target` | `--format` is not one of the export targets the source family wires. |
 | `target-exists` | The output exists and `--overwrite` was not passed. |
 | `unsupported-option` | `--points` for a non-presentation, `--pages` for a non-PDF, or `--checks` on a PDF. |
-| `invalid-query` | `--text` was empty. |
+| `invalid-query` | `--text` or `--find` was empty. |
 | `invalid-pages` | A page range is empty, malformed, zero, reversed, duplicated or beyond the page count. |
 | `conversion-failed` | The owning engine failed while exporting or extracting. |
+| `replace-failed` | The owning engine failed while replacing text or saving a replaced document back in place. |
 | `output-unwritable` | The output directory cannot be created, or the PDF text target cannot be written. |
 | `usage` | Generic usage failure with no more specific code. |
 | `runtime` | Generic runtime failure with no more specific code. |
@@ -326,6 +351,7 @@ After routing, `inspect`, `stats`, `outline`, `search`, `render` and `convert` r
 - `render` writes SVG only; `--sheet` is workbook-only and `--page` is presentation-only. `--out` needs a single selected page, while `--out-dir` writes every selected page. A batch needs `--out-dir` and writes one subdirectory per source stem.
 - `--pages` applies to single-input PDF text conversion only; it cannot be combined with multiple inputs.
 - Search is case-sensitive everywhere. A query that works in one family will not silently become case-insensitive in another.
+- `replace` writes changed documents back to their own path; presentations and PDFs have no replacement route. A `--find` that matches nothing leaves the file untouched.
 - PDF search reports lines in extracted Markdown, not PDF pages.
 - For batches, check `failed` and each `results[].code`; a zero exit code is not guaranteed even when the JSON report is printed.
 - Capability claims come from the engines. If `capabilities` or `formats` does not list a route, do not plan around it.

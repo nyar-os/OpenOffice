@@ -8,7 +8,7 @@ use std::{
     process::ExitCode,
 };
 
-use open_office::{ConvertOptions, Office, OfficeError, RenderOptions, VERSION};
+use open_office::{ConvertOptions, Office, OfficeError, RenderOptions, ReplaceOptions, VERSION};
 use serde_json::Value;
 
 fn main() -> ExitCode {
@@ -47,6 +47,7 @@ fn run(arguments: &[String]) -> Result<(), OfficeError> {
         "stats" => stats(&office, rest),
         "outline" => outline(&office, rest),
         "search" => search(&office, rest),
+        "replace" => replace(&office, rest),
         "render" => render(&office, rest),
         "convert" => convert(&office, rest),
         "open" => open(&office, rest),
@@ -244,6 +245,62 @@ fn search(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
     Ok(())
 }
 
+/// Parses `replace` paths and options, reporting one document or a batch.
+///
+/// One path keeps the single-document envelope; more than one path returns a
+/// per-input batch report and exits non-zero when any input failed. Every
+/// document that changes is saved in place in its own format.
+fn replace(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
+    let mut paths = Vec::new();
+    let mut find = None;
+    let mut with = None;
+    let mut ignore_case = false;
+    let mut limit = None;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--find" | "-f" => {
+                find = Some(value_of(arguments, &mut index, "--find")?);
+            }
+            "--with" | "-w" => {
+                with = Some(value_of(arguments, &mut index, "--with")?);
+            }
+            "--ignore-case" | "-i" => ignore_case = true,
+            "--limit" => {
+                let value = value_of(arguments, &mut index, "--limit")?;
+                limit = Some(
+                    value
+                        .parse::<u32>()
+                        .ok()
+                        .filter(|limit| *limit > 0)
+                        .ok_or_else(|| OfficeError::usage("`--limit` needs a positive integer"))?,
+                );
+            }
+            value if value.starts_with('-') => {
+                return Err(OfficeError::usage(format!("unknown option `{value}`")));
+            }
+            value => paths.push(PathBuf::from(value)),
+        }
+        index += 1;
+    }
+    if paths.is_empty() {
+        return Err(OfficeError::usage("a document path is required"));
+    }
+    let find = find.ok_or_else(|| OfficeError::usage("`--find <query>` is required"))?;
+    let with = with.ok_or_else(|| OfficeError::usage("`--with <replacement>` is required"))?;
+    let options = ReplaceOptions { ignore_case, limit };
+    if paths.len() == 1 {
+        return print_json(&office.replace(&paths[0], &find, &with, &options)?);
+    }
+    let report = office.replace_many(&paths, &find, &with, &options)?;
+    print_json(&report)?;
+    let failed = report.get("failed").and_then(Value::as_u64).unwrap_or_default();
+    if failed > 0 {
+        return Err(OfficeError::runtime(format!("{failed} of {} documents failed", paths.len())));
+    }
+    Ok(())
+}
+
 /// Parses `render` options and hands one request to the library.
 fn render(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
     let mut paths: Vec<String> = Vec::new();
@@ -397,6 +454,7 @@ fn usage() {
          \x20 open-office stats <file>...\n\
          \x20 open-office outline <file>... [--points] [--depth <n>]\n\
          \x20 open-office search <file>... --text <query> [--limit <n>]\n\
+         \x20 open-office replace <file>... --find <query> --with <replacement> [--ignore-case] [--limit <n>]\n\
          \x20 open-office render <file> [--sheet <name>] [--page <n>] [--out <file> | --out-dir <dir>] [--overwrite]\n\
          \x20 open-office render <file>... --out-dir <dir> [--sheet <name> | --page <n>] [--overwrite]\n\
          \x20 open-office formats\n\
@@ -420,6 +478,8 @@ fn usage() {
          \x20 open-office outline a.docx b.pdf c.pptx\n\
          \x20 open-office search report.docx --text invoice\n\
          \x20 open-office search a.docx b.pdf c.pptx --text total --limit 10\n\
+         \x20 open-office replace notes.md --find Acme --with Globex\n\
+         \x20 open-office replace a.docx b.xlsx --find invoice --with statement --ignore-case\n\
          \x20 open-office render budget.xlsx --out sheet.svg\n\
          \x20 open-office render deck.pptx --page 2 --out slide-2.svg\n\
          \x20 open-office render deck.pptx --out-dir preview/\n\

@@ -620,6 +620,122 @@ fn search_finds_presentation_text_through_the_office_facade() {
 }
 
 #[test]
+fn replace_saves_a_word_document_in_place() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-replace-word-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let source = dir.join("notes.md");
+    fs::write(&source, b"# Title\n\nAcme corp. and Acme Ltd.\n").expect("write markdown");
+
+    let report = office.replace(&source, "Acme", "Globex", &ReplaceOptions::default()).expect("replace");
+    assert_eq!(report["kind"], json!("word"));
+    assert_eq!(report["replaced"], json!(2));
+    assert_eq!(report["matchCase"], json!(true));
+    assert_eq!(report["saved"]["format"], json!("md"));
+    let text = fs::read_to_string(&source).expect("read back");
+    assert!(text.contains("Globex corp. and Globex Ltd."), "unexpected markdown: {text}");
+    assert!(!text.contains("Acme"));
+
+    let untouched = office.replace(&source, "globex", "x", &ReplaceOptions::default()).expect("case-sensitive miss");
+    assert_eq!(untouched["replaced"], json!(0));
+    assert_eq!(untouched["saved"], Value::Null);
+    assert!(fs::read_to_string(&source).expect("still there").contains("Globex corp. and Globex Ltd."));
+
+    let loosened =
+        office.replace(&source, "globex", "G", &ReplaceOptions { ignore_case: true, limit: Some(1) }).expect("limited replace");
+    assert_eq!(loosened["replaced"], json!(1));
+    let text = fs::read_to_string(&source).expect("read back");
+    assert!(text.contains("G corp") ^ text.contains("G Ltd"), "exactly one match was replaced: {text}");
+
+    let error = office.replace(&source, "", "x", &ReplaceOptions::default()).expect_err("empty find");
+    assert_eq!(error.code(), "invalid-query");
+    assert!(error.is_usage());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn replace_saves_a_workbook_in_place() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-replace-excel-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let created = open_excel_workbook::create(&json!({ "title": "Replace" })).expect("create");
+    let handle = handle_of(&created).expect("handle");
+    open_excel_workbook::edit(
+        handle,
+        &json!({ "operations": [
+            { "op": "cell.set", "sheet": "Sheet1", "reference": "A1", "value": "Widget cost" },
+            { "op": "cell.set", "sheet": "Sheet1", "reference": "B2", "value": "Two Widgets" },
+        ] }),
+    )
+    .expect("seed");
+    let path = dir.join("budget.oexcel");
+    open_excel_workbook::save(handle, &path, true).expect("save");
+    let _ = open_excel_workbook::close(handle);
+
+    let report = office.replace(&path, "Widget", "Gadget", &ReplaceOptions::default()).expect("replace sheet");
+    assert_eq!(report["kind"], json!("excel"));
+    assert_eq!(report["replaced"], json!(2));
+    assert_eq!(report["saved"]["format"], json!("oexcel"));
+
+    let search = office.search(&path, "Gadget", None).expect("search after replace");
+    assert_eq!(search["hits"].as_array().expect("hits").len(), 2);
+    let stale = office.search(&path, "Widget", None).expect("search old text");
+    assert!(stale["hits"].as_array().expect("hits").is_empty());
+
+    let empty = dir.join("empty.oexcel");
+    let created = open_excel_workbook::create(&json!({ "title": "Empty" })).expect("create");
+    let handle = handle_of(&created).expect("handle");
+    open_excel_workbook::save(handle, &empty, true).expect("save empty");
+    let _ = open_excel_workbook::close(handle);
+    let report = office.replace(&empty, "Widget", "Gadget", &ReplaceOptions::default()).expect("empty sheet batch");
+    assert_eq!(report["replaced"], json!(0));
+    assert_eq!(report["saved"], Value::Null);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn replace_many_reports_each_input_in_order() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-replace-many-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let first = dir.join("a.md");
+    fs::write(&first, b"# Alpha\n").expect("write first");
+    let second = dir.join("b.md");
+    fs::write(&second, b"Alpha beta.\n").expect("write second");
+    let deck = open_ppt_deck::create(open_ppt_deck::CreateRequest {
+        title: Some("No replace".to_owned()),
+        size: None,
+        theme: None,
+        slides: vec!["Intro".to_owned()],
+    })
+    .expect("create deck");
+    let slides = dir.join("deck.project");
+    open_ppt_deck::save(&deck, &slides, true).expect("save deck");
+
+    let inputs = vec![first.clone(), second.clone(), slides.clone(), PathBuf::from("missing-replace.docx")];
+    let report = office.replace_many(&inputs, "Alpha", "Omega", &ReplaceOptions::default()).expect("replace batch");
+    assert_eq!(report["find"], json!("Alpha"));
+    assert_eq!(report["replace"], json!("Omega"));
+    assert_eq!(report["updated"], json!(2));
+    assert_eq!(report["failed"], json!(2));
+    let results = report["results"].as_array().expect("results array");
+    assert_eq!(results[0]["ok"], json!(true));
+    assert_eq!(results[0]["kind"], json!("word"));
+    assert_eq!(results[0]["replaced"], json!(1));
+    assert_eq!(results[1]["ok"], json!(true));
+    assert_eq!(results[1]["replaced"], json!(1));
+    assert_eq!(results[2]["ok"], json!(false));
+    assert_eq!(results[2]["code"], json!("unsupported-target"));
+    assert_eq!(results[3]["code"], json!("not-found"));
+    assert!(fs::read_to_string(&first).expect("read first").contains("Omega"));
+    assert!(fs::read_to_string(&second).expect("read second").contains("Omega"));
+
+    assert!(office.replace_many(&[], "a", "b", &ReplaceOptions::default()).expect_err("empty inputs").is_usage());
+    assert!(office.replace_many(&inputs, "", "b", &ReplaceOptions::default()).expect_err("empty find").is_usage());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn render_writes_a_workbook_sheet_and_protects_the_target() {
     let dir = std::env::temp_dir().join(format!("open-office-render-excel-{}", std::process::id()));
     fs::create_dir_all(&dir).expect("temp dir");
