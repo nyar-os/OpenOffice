@@ -494,6 +494,15 @@ impl Office {
     /// [`Office::outline`] rejects (missing file, wrong container) applies here
     /// too.
     pub fn compare(&self, left: &Path, right: &Path) -> Result<Value, OfficeError> {
+        self.compare_with(left, right, false)
+    }
+
+    /// Compares two same-family outlines, optionally folding case in titles.
+    ///
+    /// With `ignore_case`, `"Intro"` and `"INTRO"` are the same section, so a
+    /// pure case change is not reported as a rename. Added and removed titles
+    /// keep their original spelling from the side they came from.
+    pub fn compare_with(&self, left: &Path, right: &Path, ignore_case: bool) -> Result<Value, OfficeError> {
         let left_kind = Kind::of_path(left)?;
         let right_kind = Kind::of_path(right)?;
         if left_kind != right_kind {
@@ -506,11 +515,12 @@ impl Office {
         }
         let left_sections = self.outline_sections(left)?;
         let right_sections = self.outline_sections(right)?;
-        let (added, removed, renamed) = diff_sections(&left_sections, &right_sections);
+        let (added, removed, renamed) = diff_sections(&left_sections, &right_sections, ignore_case);
         Ok(json!({
             "kind": left_kind.label(),
             "left": { "path": left.display().to_string(), "sections": left_sections.len() },
             "right": { "path": right.display().to_string(), "sections": right_sections.len() },
+            "ignoreCase": ignore_case,
             "identical": added.is_empty() && removed.is_empty() && renamed.is_empty(),
             "added": added,
             "removed": removed,
@@ -1832,12 +1842,20 @@ fn collect_titles(value: &Value, titles: &mut Vec<String>) {
 /// Inside each maximal change block the removed titles are paired positionally
 /// with the added titles and reported as renames; unpaired entries stay in the
 /// `added` and `removed` lists.
-fn diff_sections(left: &[String], right: &[String]) -> (Vec<String>, Vec<String>, Vec<Value>) {
+fn diff_sections(left: &[String], right: &[String], ignore_case: bool) -> (Vec<String>, Vec<String>, Vec<Value>) {
+    let same = |left: &str, right: &str| {
+        if ignore_case {
+            left.to_lowercase() == right.to_lowercase()
+        }
+        else {
+            left == right
+        }
+    };
     let (n, m) = (left.len(), right.len());
     let mut table = vec![vec![0u32; m + 1]; n + 1];
     for i in (0..n).rev() {
         for j in (0..m).rev() {
-            table[i][j] = if left[i] == right[j] {
+            table[i][j] = if same(&left[i], &right[j]) {
                 table[i + 1][j + 1] + 1
             }
             else {
@@ -1848,7 +1866,7 @@ fn diff_sections(left: &[String], right: &[String]) -> (Vec<String>, Vec<String>
     let mut script = Vec::with_capacity(n + m);
     let (mut i, mut j) = (0usize, 0usize);
     while i < n && j < m {
-        if left[i] == right[j] {
+        if same(&left[i], &right[j]) {
             script.push(Edit::Equal);
             i += 1;
             j += 1;

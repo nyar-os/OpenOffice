@@ -1143,3 +1143,27 @@ fn replace_dry_run_counts_matches_without_writing_any_family() {
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn compare_can_fold_case_in_section_titles() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-compare-case-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let left = dir.join("left.md");
+    fs::write(&left, b"# Intro\n\n## Details\n").expect("write left");
+    let right = dir.join("right.md");
+    fs::write(&right, b"# INTRO\n\n## details\n").expect("write right");
+
+    let strict = office.compare(&left, &right).expect("strict compare");
+    assert_eq!(strict["identical"], json!(false));
+    assert_eq!(strict["ignoreCase"], json!(false));
+    assert_eq!(strict["renamed"], json!([{ "from": "Intro", "to": "INTRO" }, { "from": "Details", "to": "details" }]));
+
+    let folded = office.compare_with(&left, &right, true).expect("case-folded compare");
+    assert_eq!(folded["identical"], json!(true));
+    assert_eq!(folded["ignoreCase"], json!(true));
+    assert_eq!(folded["added"], json!([]));
+    assert_eq!(folded["removed"], json!([]));
+    assert_eq!(folded["renamed"], json!([]));
+    let _ = fs::remove_dir_all(&dir);
+}

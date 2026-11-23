@@ -227,11 +227,21 @@ fn outline(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
 /// Exactly two documents of the same family are required; the diff lists the
 /// sections added, removed and renamed between the left and the right outline.
 fn compare(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
-    let paths = document_paths(arguments, "two document paths are required")?;
+    let mut paths = Vec::new();
+    let mut ignore_case = false;
+    for argument in arguments {
+        match argument.as_str() {
+            "--ignore-case" | "-i" => ignore_case = true,
+            flag if flag.starts_with('-') => {
+                return Err(OfficeError::usage(format!("unknown option `{flag}`")));
+            }
+            path => paths.push(PathBuf::from(path)),
+        }
+    }
     if paths.len() != 2 {
         return Err(OfficeError::usage("`compare` needs exactly two document paths"));
     }
-    print_json(&office.compare(&paths[0], &paths[1])?)
+    print_json(&office.compare_with(&paths[0], &paths[1], ignore_case)?)
 }
 
 /// Parses `search` paths and options, reporting one document or a batch.
@@ -486,7 +496,7 @@ fn usage() {
          \x20 open-office stats <file>...\n\
          \x20 open-office totals <file>...\n\
          \x20 open-office outline <file>... [--points] [--depth <n>]\n\
-         \x20 open-office compare <left> <right>\n\
+         \x20 open-office compare <left> <right> [--ignore-case]\n\
          \x20 open-office search <file>... --text <query> [--limit <n>]\n\
          \x20 open-office replace <file>... --find <query> --with <replacement> [--ignore-case] [--limit <n>] [--dry-run]\n\
          \x20 open-office render <file> [--sheet <name>] [--page <n>] [--out <file> | --out-dir <dir>] [--overwrite]\n\

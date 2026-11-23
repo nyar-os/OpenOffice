@@ -21,7 +21,7 @@ open-office formats
 | `stats <file>...` | none | Lightweight per-family statistics; one path returns the single envelope, more paths return a batch report. |
 | `totals <file>...` | none | Aggregates the statistics of every input into one suite-level report with per-family sums; a failing document is counted in `failed` and does not stop the batch. |
 | `outline <file>...` | `--points` (presentations), `--depth <n>` (word and PDF) | `--points` is accepted only for presentations. `--depth` keeps word headings and PDF bookmarks at that level or shallower and is rejected for other families. One path returns the single envelope, more paths return a batch report. |
-| `compare <left> <right>` | exactly two paths | Outline-level diff of two documents of the same family: word heading titles, workbook sheet names, slide titles or PDF bookmark titles, aligned in document order into `added`, `removed` and `renamed` sections. Different families fail with `kind-mismatch`. |
+| `compare <left> <right>` | exactly two paths, optional `--ignore-case` / `-i` | Outline-level diff of two documents of the same family: word heading titles, workbook sheet names, slide titles or PDF bookmark titles, aligned in document order into `added`, `removed` and `renamed` sections. `--ignore-case` folds case, so a pure case change is not a rename. Different families fail with `kind-mismatch`. |
 | `search <file>...` | `--text <query>` / `-t` (required), `--limit <n>` (optional) | Case-sensitive in every family. Default limit is 100, clamped to 1-500. One path returns the single envelope, more paths return a batch report. |
 | `replace <file>...` | `--find <query>` / `-f` (required), `--with <replacement>` / `-w` (required), `--ignore-case` / `-i`, `--limit <n>`, `--dry-run` (optional) | Find-and-replace saved in place for word documents, workbooks and presentations; PDFs fail with `unsupported-target`. Matching is case-sensitive unless `--ignore-case`. `--dry-run` counts matches but writes nothing. One path returns the single envelope, more paths return a batch report. |
 | `render <file>...` | `--sheet <name>` / `-s` (workbooks), `--page <n>` / `-p` (presentations), `--out <file>` / `-o`, `--out-dir <dir>`, `--overwrite` | SVG only. `--out` needs exactly one page; `--out-dir` writes `page-<n>.svg` per page. Several paths require `--out-dir` and get one subdirectory per source stem. |
@@ -214,6 +214,7 @@ Presentation outlines always include a `points` array, derived from the slide bo
   "kind": "word",
   "left": { "path": "draft.docx", "sections": 3 },
   "right": { "path": "final.docx", "sections": 4 },
+  "ignoreCase": false,
   "identical": false,
   "added": ["Appendix"],
   "removed": [],
@@ -221,7 +222,7 @@ Presentation outlines always include a `points` array, derived from the slide bo
 }
 ```
 
-Sections come from the owning engine's own outline projection, flattened to titles in document order: word heading titles (nested children flattened), workbook sheet names, slide titles and PDF bookmark titles. The two lists are aligned with a longest-common-subsequence walk; inside each change block a removed title paired with an added title is reported as `renamed`, and unpaired entries stay in `added` or `removed`. `identical` is true only when all three lists are empty. The two paths must route to the same family, otherwise the command fails with `kind-mismatch`; every other guardrail of `outline` (missing file, wrong container, unsupported extension) applies to each side.
+Sections come from the owning engine's own outline projection, flattened to titles in document order: word heading titles (nested children flattened), workbook sheet names, slide titles and PDF bookmark titles. The two lists are aligned with a longest-common-subsequence walk; inside each change block a removed title paired with an added title is reported as `renamed`, and unpaired entries stay in `added` or `removed`. `identical` is true only when all three lists are empty; with `--ignore-case` titles compare after lowercasing, and the report echoes `ignoreCase`. The two paths must route to the same family, otherwise the command fails with `kind-mismatch`; every other guardrail of `outline` (missing file, wrong container, unsupported extension) applies to each side.
 
 ### `search`
 

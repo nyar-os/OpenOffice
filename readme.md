@@ -81,6 +81,7 @@ Supported formats:
 - `open-office capabilities` - the capability matrix reported by each bundled engine.
 - `open-office totals a.docx b.pdf c.xlsx` - one aggregated count across any mix of documents.
 - `open-office compare draft.docx final.docx` - sections added, removed or renamed between two same-family outlines.
+- `open-office compare draft.docx final.docx --ignore-case` - treat titles that differ only by case as the same section.
 - `open-office replace notes.md --find Acme --with Globex` - find-and-replace saved back in place.
 - `open-office replace notes.md --find Acme --with Globex --dry-run` - count the matches without touching the file.
 
