@@ -827,6 +827,41 @@ fn replace_saves_a_workbook_in_place() {
 }
 
 #[test]
+fn replace_rewrites_presentation_text_in_place() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-replace-deck-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let deck = open_ppt_deck::create(open_ppt_deck::CreateRequest {
+        title: Some("Replace deck".to_owned()),
+        size: None,
+        theme: None,
+        slides: vec!["Roadmap".to_owned(), "Roadmap review".to_owned()],
+    })
+    .expect("create deck");
+    let project = dir.join("deck.project");
+    open_ppt_deck::save(&deck, &project, true).expect("save project");
+
+    let report = office.replace(&project, "Roadmap", "Plan", &ReplaceOptions::default()).expect("replace project");
+    assert_eq!(report["kind"], json!("presentation"));
+    assert_eq!(report["replaced"], json!(2));
+    assert_eq!(report["saved"]["format"], json!("project"));
+    let search = office.search(&project, "Plan", None).expect("search new text");
+    assert_eq!(search["hits"].as_array().expect("hits").len(), 2);
+    let stale = office.search(&project, "Roadmap", None).expect("search old text");
+    assert!(stale["hits"].as_array().expect("hits").is_empty());
+
+    let pptx = dir.join("deck.pptx");
+    office.convert(&project, "pptx", &pptx, false).expect("convert to pptx");
+    let report = office.replace(&pptx, "Plan", "Route", &ReplaceOptions::default()).expect("replace pptx");
+    assert_eq!(report["kind"], json!("presentation"));
+    assert_eq!(report["replaced"], json!(2));
+    assert_eq!(report["saved"]["format"], json!("pptx"));
+    let search = office.search(&pptx, "Route", None).expect("search exported text");
+    assert_eq!(search["hits"].as_array().expect("hits").len(), 2);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn replace_many_reports_each_input_in_order() {
     let office = Office::new();
     let dir = std::env::temp_dir().join(format!("open-office-replace-many-{}", std::process::id()));
@@ -849,16 +884,17 @@ fn replace_many_reports_each_input_in_order() {
     let report = office.replace_many(&inputs, "Alpha", "Omega", &ReplaceOptions::default()).expect("replace batch");
     assert_eq!(report["find"], json!("Alpha"));
     assert_eq!(report["replace"], json!("Omega"));
-    assert_eq!(report["updated"], json!(2));
-    assert_eq!(report["failed"], json!(2));
+    assert_eq!(report["updated"], json!(3));
+    assert_eq!(report["failed"], json!(1));
     let results = report["results"].as_array().expect("results array");
     assert_eq!(results[0]["ok"], json!(true));
     assert_eq!(results[0]["kind"], json!("word"));
     assert_eq!(results[0]["replaced"], json!(1));
     assert_eq!(results[1]["ok"], json!(true));
     assert_eq!(results[1]["replaced"], json!(1));
-    assert_eq!(results[2]["ok"], json!(false));
-    assert_eq!(results[2]["code"], json!("unsupported-target"));
+    assert_eq!(results[2]["ok"], json!(true), "presentations now replace");
+    assert_eq!(results[2]["kind"], json!("presentation"));
+    assert_eq!(results[2]["replaced"], json!(0), "the deck has no match");
     assert_eq!(results[3]["code"], json!("not-found"));
     assert!(fs::read_to_string(&first).expect("read first").contains("Omega"));
     assert!(fs::read_to_string(&second).expect("read second").contains("Omega"));

@@ -52,7 +52,7 @@ You can also place a prebuilt `open-office` binary on your `PATH`. Source builds
 - **Batch without surprises.** Multiple inputs convert into an output directory named after each source stem, and `stats`, `inspect`, `outline`, `search`, `replace`, `totals` and `probe` accept several files at once; one failure does not stop the rest.
 - **Suite-level totals.** `totals` sums the engine's own statistics across any mix of documents — words and pages and slides and cells in one call.
 - **Outline-level diff.** `compare` aligns the sections of two same-family documents and reports what was added, removed or renamed.
-- **Find-and-replace across files.** `replace` runs the owning engine's own replacement and saves each changed document back in place; a query that matches nothing leaves the file untouched.
+- **Find-and-replace across files.** `replace` runs the owning engine's own replacement across word documents, workbooks and presentations, and saves each changed document back in place; a query that matches nothing leaves the file untouched.
 - **Stable locations.** Search hits carry the owning engine's own locators, and batch failures carry stable error codes.
 
 Supported formats:

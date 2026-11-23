@@ -23,7 +23,7 @@ open-office formats
 | `outline <file>...` | `--points` (presentations), `--depth <n>` (word and PDF) | `--points` is accepted only for presentations. `--depth` keeps word headings and PDF bookmarks at that level or shallower and is rejected for other families. One path returns the single envelope, more paths return a batch report. |
 | `compare <left> <right>` | exactly two paths | Outline-level diff of two documents of the same family: word heading titles, workbook sheet names, slide titles or PDF bookmark titles, aligned in document order into `added`, `removed` and `renamed` sections. Different families fail with `kind-mismatch`. |
 | `search <file>...` | `--text <query>` / `-t` (required), `--limit <n>` (optional) | Case-sensitive in every family. Default limit is 100, clamped to 1-500. One path returns the single envelope, more paths return a batch report. |
-| `replace <file>...` | `--find <query>` / `-f` (required), `--with <replacement>` / `-w` (required), `--ignore-case` / `-i`, `--limit <n>` (optional) | Find-and-replace saved in place for word documents and workbooks; presentations and PDFs fail with `unsupported-target`. Matching is case-sensitive unless `--ignore-case`. One path returns the single envelope, more paths return a batch report. |
+| `replace <file>...` | `--find <query>` / `-f` (required), `--with <replacement>` / `-w` (required), `--ignore-case` / `-i`, `--limit <n>` (optional) | Find-and-replace saved in place for word documents, workbooks and presentations; PDFs fail with `unsupported-target`. Matching is case-sensitive unless `--ignore-case`. One path returns the single envelope, more paths return a batch report. |
 | `render <file>...` | `--sheet <name>` / `-s` (workbooks), `--page <n>` / `-p` (presentations), `--out <file>` / `-o`, `--out-dir <dir>`, `--overwrite` | SVG only. `--out` needs exactly one page; `--out-dir` writes `page-<n>.svg` per page. Several paths require `--out-dir` and get one subdirectory per source stem. |
 | `formats` | none | Import and export matrix. |
 | `capabilities` | none | Capability matrix. |
@@ -271,7 +271,7 @@ where `search` is the single-document envelope above. `limit` applies per docume
 }
 ```
 
-The request reaches the owning engine's own find-and-replace: Word covers section titles, paragraphs, list items and table cells; workbooks cover the text cells of every sheet that holds content (formulas are left alone). `--limit` caps replacements per document for Word and per sheet for workbooks. Only a document that changed is written back, in its own format (`oword`/`oexcel` projects save natively, every other extension re-exports through the engine's export route); a document with no match reports `replaced: 0` and `saved: null` and its file is untouched. Presentations and PDFs fail with `unsupported-target`.
+The request reaches the owning engine's own find-and-replace: Word covers section titles, paragraphs, list items and table cells; workbooks cover the text cells of every sheet that holds content (formulas are left alone); presentations cover slide text, table cells and speaker notes. `--limit` caps replacements per document for Word and per sheet for workbooks, and is ignored for presentations. Only a document that changed is written back, in its own format (`oword`/`oexcel` projects save natively, `project`/`oppt`/`opresent` decks save natively, every other extension re-exports through the engine's export route). A deck imports from its PresentationML package and re-exports it, so its import and export losses are the same as `convert`. A document with no match reports `replaced: 0` and `saved: null` and its file is untouched. PDFs fail with `unsupported-target`, and macro-enabled presentation packages have no write-back route and fail the same way.
 
 With more than one path, `replace` returns
 
@@ -396,7 +396,7 @@ After routing, `inspect`, `stats`, `outline`, `search`, `render` and `convert` r
 - `render` writes SVG only; `--sheet` is workbook-only and `--page` is presentation-only. `--out` needs a single selected page, while `--out-dir` writes every selected page. A batch needs `--out-dir` and writes one subdirectory per source stem.
 - `--pages` applies to single-input PDF text conversion only; it cannot be combined with multiple inputs.
 - Search is case-sensitive everywhere. A query that works in one family will not silently become case-insensitive in another.
-- `replace` writes changed documents back to their own path; presentations and PDFs have no replacement route. A `--find` that matches nothing leaves the file untouched.
+- `replace` writes changed documents back to their own path; PDFs have no replacement route. A `--find` that matches nothing leaves the file untouched.
 - PDF search reports lines in extracted Markdown, not PDF pages.
 - For batches, check `failed` and each `results[].code`; a zero exit code is not guaranteed even when the JSON report is printed.
 - Capability claims come from the engines. If `capabilities` or `formats` does not list a route, do not plan around it.

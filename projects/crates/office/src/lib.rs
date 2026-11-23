@@ -618,13 +618,14 @@ impl Office {
     /// Replaces one query with new text inside one document, saved in place.
     ///
     /// The request reaches the owning engine's own find-and-replace, so Word
-    /// covers section titles, paragraphs, list items and table cells while
-    /// workbooks cover the text cells of every sheet that holds content.
-    /// Matching is case-sensitive unless `ignore_case` is set, mirroring the
-    /// suite's case-sensitive `search`. A document with no match is reported
-    /// with `replaced: 0` and its file is left untouched; only a document that
-    /// changed is written back in its own format. Presentations and PDFs are
-    /// refused because neither engine wires a replacement route in this build.
+    /// covers section titles, paragraphs, list items and table cells, workbooks
+    /// cover the text cells of every sheet that holds content, and presentations
+    /// cover slide text, table cells and speaker notes. Matching is
+    /// case-sensitive unless `ignore_case` is set, mirroring the suite's
+    /// case-sensitive `search`. A document with no match is reported with
+    /// `replaced: 0` and its file is left untouched; only a document that
+    /// changed is written back in its own format. PDF has no replacement route
+    /// in this build.
     pub fn replace(&self, path: &Path, find: &str, with: &str, options: &ReplaceOptions) -> Result<Value, OfficeError> {
         if find.is_empty() {
             return Err(OfficeError::usage("`--find` needs a non-empty query").with_code("invalid-query"));
@@ -709,9 +710,47 @@ impl Office {
                 let _ = open_excel_workbook::close(handle);
                 (replaced, revision, saved)
             }
-            Kind::Presentation | Kind::Pdf => {
+            Kind::Presentation => {
+                let mut loaded = load_deck(path)?;
+                let outcome = open_ppt_deck::edit::edit(
+                    &mut loaded.deck,
+                    &json!({ "operations": [{
+                        "op": "deck.replaceText",
+                        "find": find,
+                        "replace": with,
+                        "caseSensitive": match_case,
+                    }] }),
+                )
+                .map_err(replace_failed)?;
+                let replaced = outcome
+                    .get("results")
+                    .and_then(Value::as_array)
+                    .and_then(|results| results.first())
+                    .and_then(|value| value.as_u64().or_else(|| value.as_str().and_then(|text| text.parse().ok())))
+                    .unwrap_or_default();
+                let revision = outcome.get("revision").cloned().unwrap_or(Value::Null);
+                let saved = if replaced == 0 {
+                    Value::Null
+                }
+                else if matches!(extension.as_str(), "project" | "oppt" | "opresent") {
+                    let bytes = open_ppt_deck::save(&loaded.deck, path, true).map_err(replace_failed)?;
+                    json!({ "format": extension, "report": { "bytes": bytes } })
+                }
+                else {
+                    let format =
+                        presentation_persist_format(&extension).ok_or_else(|| unsupported_extension_route(&extension))?;
+                    let report = open_ppt_deck::export(
+                        &loaded.deck,
+                        &json!({ "format": format, "target": path.display().to_string(), "overwrite": true }),
+                    )
+                    .map_err(replace_failed)?;
+                    json!({ "format": format, "report": report })
+                };
+                (replaced, revision, saved)
+            }
+            Kind::Pdf => {
                 return Err(OfficeError::usage(format!(
-                    "`replace` supports word documents and workbooks; {} has no find-and-replace route in this build",
+                    "`replace` supports word documents, workbooks and presentations; {} has no find-and-replace route in this build",
                     kind.label()
                 ))
                 .with_code("unsupported-target"));
@@ -1710,6 +1749,19 @@ fn excel_persist_format(extension: &str) -> Option<&'static str> {
         "xlsx" | "xlsm" => Some("xlsx"),
         "csv" => Some("csv"),
         "tsv" => Some("tsv"),
+        _ => None,
+    }
+}
+
+/// The export route that writes a presentation back under its own extension.
+///
+/// Macro-enabled packages have no export route, so they keep their macro-aware
+/// refusal instead of being rewritten as a plain package.
+fn presentation_persist_format(extension: &str) -> Option<&'static str> {
+    match extension {
+        "pptx" => Some("pptx"),
+        "ppsx" => Some("ppsx"),
+        "potx" => Some("potx"),
         _ => None,
     }
 }
