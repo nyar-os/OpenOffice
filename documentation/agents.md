@@ -21,6 +21,7 @@ open-office formats
 | `stats <file>...` | none | Lightweight per-family statistics; one path returns the single envelope, more paths return a batch report. |
 | `totals <file>...` | none | Aggregates the statistics of every input into one suite-level report with per-family sums; a failing document is counted in `failed` and does not stop the batch. |
 | `outline <file>...` | `--points` (presentations), `--depth <n>` (word and PDF) | `--points` is accepted only for presentations. `--depth` keeps word headings and PDF bookmarks at that level or shallower and is rejected for other families. One path returns the single envelope, more paths return a batch report. |
+| `compare <left> <right>` | exactly two paths | Outline-level diff of two documents of the same family: word heading titles, workbook sheet names, slide titles or PDF bookmark titles, aligned in document order into `added`, `removed` and `renamed` sections. Different families fail with `kind-mismatch`. |
 | `search <file>...` | `--text <query>` / `-t` (required), `--limit <n>` (optional) | Case-sensitive in every family. Default limit is 100, clamped to 1-500. One path returns the single envelope, more paths return a batch report. |
 | `replace <file>...` | `--find <query>` / `-f` (required), `--with <replacement>` / `-w` (required), `--ignore-case` / `-i`, `--limit <n>` (optional) | Find-and-replace saved in place for word documents and workbooks; presentations and PDFs fail with `unsupported-target`. Matching is case-sensitive unless `--ignore-case`. One path returns the single envelope, more paths return a batch report. |
 | `render <file>...` | `--sheet <name>` / `-s` (workbooks), `--page <n>` / `-p` (presentations), `--out <file>` / `-o`, `--out-dir <dir>`, `--overwrite` | SVG only. `--out` needs exactly one page; `--out-dir` writes `page-<n>.svg` per page. Several paths require `--out-dir` and get one subdirectory per source stem. |
@@ -71,7 +72,7 @@ when the detector quoted some.
 ```json
 {
   "engine": { "package": "open-office", "version": "0.1.0" },
-  "commands": ["probe", "inspect", "convert", "open", "formats", "stats", "totals", "outline", "search", "replace", "render", "capabilities", "version"],
+  "commands": ["probe", "inspect", "convert", "open", "formats", "stats", "totals", "outline", "compare", "search", "replace", "render", "capabilities", "version"],
   "modules": {
     "word": {},
     "excel": {},
@@ -205,6 +206,22 @@ exits `1` when `failed` is greater than zero.
 Presentation outlines always include a `points` array, derived from the slide body text and capped by the deck engine; a slide without body text reports an empty array. `--points` is accepted for presentations and is a usage error for every other family.
 
 `--depth <n>` keeps word headings and PDF bookmarks whose level or depth is `n` or shallower; deeper entries and their descendants are dropped. Workbooks and presentations reject it as a usage error.
+
+### `compare`
+
+```json
+{
+  "kind": "word",
+  "left": { "path": "draft.docx", "sections": 3 },
+  "right": { "path": "final.docx", "sections": 4 },
+  "identical": false,
+  "added": ["Appendix"],
+  "removed": [],
+  "renamed": [{ "from": "Details", "to": "Summary" }]
+}
+```
+
+Sections come from the owning engine's own outline projection, flattened to titles in document order: word heading titles (nested children flattened), workbook sheet names, slide titles and PDF bookmark titles. The two lists are aligned with a longest-common-subsequence walk; inside each change block a removed title paired with an added title is reported as `renamed`, and unpaired entries stay in `added` or `removed`. `identical` is true only when all three lists are empty. The two paths must route to the same family, otherwise the command fails with `kind-mismatch`; every other guardrail of `outline` (missing file, wrong container, unsupported extension) applies to each side.
 
 ### `search`
 
@@ -346,6 +363,7 @@ Codes are exposed to library callers and in batch `results[].code`. The CLI itse
 | `target-exists` | The output exists and `--overwrite` was not passed. |
 | `unsupported-option` | `--points` for a non-presentation, `--pages` for a non-PDF, or `--checks` on a PDF. |
 | `invalid-query` | `--text` or `--find` was empty. |
+| `kind-mismatch` | `compare` was given two documents from different families. |
 | `invalid-pages` | A page range is empty, malformed, zero, reversed, duplicated or beyond the page count. |
 | `conversion-failed` | The owning engine failed while exporting or extracting. |
 | `replace-failed` | The owning engine failed while replacing text or saving a replaced document back in place. |

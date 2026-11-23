@@ -47,6 +47,7 @@ fn run(arguments: &[String]) -> Result<(), OfficeError> {
         "stats" => stats(&office, rest),
         "totals" => totals(&office, rest),
         "outline" => outline(&office, rest),
+        "compare" => compare(&office, rest),
         "search" => search(&office, rest),
         "replace" => replace(&office, rest),
         "render" => render(&office, rest),
@@ -219,6 +220,18 @@ fn outline(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
         return Err(OfficeError::runtime(format!("{failed} of {} documents failed", paths.len())));
     }
     Ok(())
+}
+
+/// Parses `compare` paths and reports one outline-level diff.
+///
+/// Exactly two documents of the same family are required; the diff lists the
+/// sections added, removed and renamed between the left and the right outline.
+fn compare(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
+    let paths = document_paths(arguments, "two document paths are required")?;
+    if paths.len() != 2 {
+        return Err(OfficeError::usage("`compare` needs exactly two document paths"));
+    }
+    print_json(&office.compare(&paths[0], &paths[1])?)
 }
 
 /// Parses `search` paths and options, reporting one document or a batch.
@@ -471,6 +484,7 @@ fn usage() {
          \x20 open-office stats <file>...\n\
          \x20 open-office totals <file>...\n\
          \x20 open-office outline <file>... [--points] [--depth <n>]\n\
+         \x20 open-office compare <left> <right>\n\
          \x20 open-office search <file>... --text <query> [--limit <n>]\n\
          \x20 open-office replace <file>... --find <query> --with <replacement> [--ignore-case] [--limit <n>]\n\
          \x20 open-office render <file> [--sheet <name>] [--page <n>] [--out <file> | --out-dir <dir>] [--overwrite]\n\
@@ -494,6 +508,7 @@ fn usage() {
          \x20 open-office outline report.docx\n\
          \x20 open-office outline deck.pptx --points\n\
          \x20 open-office outline report.docx --depth 2\n\
+         \x20 open-office compare draft.docx final.docx\n\
          \x20 open-office outline a.docx b.pdf c.pptx\n\
          \x20 open-office search report.docx --text invoice\n\
          \x20 open-office search a.docx b.pdf c.pptx --text total --limit 10\n\

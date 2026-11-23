@@ -8,7 +8,7 @@
 
 ## 💡 What is OpenOffice?
 
-OpenOffice is one binary for four document families: Word, Excel, PowerPoint and PDF. It probes what a file really is, inspects its structure, reports statistics, projects its outline, searches its text, replaces text in place, aggregates counts across files, and converts it to another format.
+OpenOffice is one binary for four document families: Word, Excel, PowerPoint and PDF. It probes what a file really is, inspects its structure, reports statistics, projects its outline, diffs two outlines, searches its text, replaces text in place, aggregates counts across files, and converts it to another format.
 
 The binary does not grow a fifth document model. Every request is routed to the engine that owns the format, so summaries, checks, statistics, outlines and search hits are the owning engine's own reports. There is no copied parser and no second source of truth. Conversion targets are the ones the owning engine actually writes: a target that cannot be produced is refused with a clear message instead of being faked.
 
@@ -51,6 +51,7 @@ You can also place a prebuilt `open-office` binary on your `PATH`. Source builds
 - **Guardrails by default.** Existing outputs require `--overwrite`, `--points` is accepted only for presentations, `--pages` only for PDF text, and bytes that contradict the extension are rejected.
 - **Batch without surprises.** Multiple inputs convert into an output directory named after each source stem, and `stats`, `inspect`, `outline`, `search`, `replace`, `totals` and `probe` accept several files at once; one failure does not stop the rest.
 - **Suite-level totals.** `totals` sums the engine's own statistics across any mix of documents — words and pages and slides and cells in one call.
+- **Outline-level diff.** `compare` aligns the sections of two same-family documents and reports what was added, removed or renamed.
 - **Find-and-replace across files.** `replace` runs the owning engine's own replacement and saves each changed document back in place; a query that matches nothing leaves the file untouched.
 - **Stable locations.** Search hits carry the owning engine's own locators, and batch failures carry stable error codes.
 
@@ -78,6 +79,9 @@ Supported formats:
 - [Agent command reference](documentation/agents.md) - command list, required and optional flags, JSON report shapes, error codes, family routing and guardrails.
 - `open-office formats` - the import and export matrix of the binary you installed.
 - `open-office capabilities` - the capability matrix reported by each bundled engine.
+- `open-office totals a.docx b.pdf c.xlsx` - one aggregated count across any mix of documents.
+- `open-office compare draft.docx final.docx` - sections added, removed or renamed between two same-family outlines.
+- `open-office replace notes.md --find Acme --with Globex` - find-and-replace saved back in place.
 
 ## 📜 License
 

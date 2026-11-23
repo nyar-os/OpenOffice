@@ -675,6 +675,84 @@ fn search_finds_presentation_text_through_the_office_facade() {
 }
 
 #[test]
+fn compare_diffs_word_outlines_with_rename_pairing() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-compare-word-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let left = dir.join("draft.md");
+    fs::write(&left, b"# Intro\n\n## Details\n\n## Plans\n").expect("write draft");
+    let right = dir.join("final.md");
+    fs::write(&right, b"# Intro\n\n## Summary\n\n## Plans\n\n## Appendix\n").expect("write final");
+
+    let report = office.compare(&left, &right).expect("compare drafts");
+    assert_eq!(report["kind"], json!("word"));
+    assert_eq!(report["left"]["sections"], json!(3));
+    assert_eq!(report["right"]["sections"], json!(4));
+    assert_eq!(report["identical"], json!(false));
+    assert_eq!(report["renamed"], json!([{ "from": "Details", "to": "Summary" }]));
+    assert_eq!(report["added"], json!(["Appendix"]));
+    assert_eq!(report["removed"], json!([]));
+
+    let same = office.compare(&left, &left).expect("compare with itself");
+    assert_eq!(same["identical"], json!(true));
+    assert_eq!(same["added"], json!([]));
+    assert_eq!(same["removed"], json!([]));
+    assert_eq!(same["renamed"], json!([]));
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn compare_diffs_presentation_slide_titles() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-compare-deck-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let before = open_ppt_deck::create(open_ppt_deck::CreateRequest {
+        title: Some("Before".to_owned()),
+        size: None,
+        theme: None,
+        slides: vec!["Intro".to_owned(), "Plan".to_owned()],
+    })
+    .expect("create before");
+    let before_path = dir.join("before.project");
+    open_ppt_deck::save(&before, &before_path, true).expect("save before");
+    let after = open_ppt_deck::create(open_ppt_deck::CreateRequest {
+        title: Some("After".to_owned()),
+        size: None,
+        theme: None,
+        slides: vec!["Plan".to_owned(), "Review".to_owned()],
+    })
+    .expect("create after");
+    let after_path = dir.join("after.project");
+    open_ppt_deck::save(&after, &after_path, true).expect("save after");
+
+    let report = office.compare(&before_path, &after_path).expect("compare decks");
+    assert_eq!(report["kind"], json!("presentation"));
+    assert_eq!(report["left"]["sections"], json!(2));
+    assert_eq!(report["right"]["sections"], json!(2));
+    assert_eq!(report["removed"], json!(["Intro"]));
+    assert_eq!(report["added"], json!(["Review"]));
+    assert_eq!(report["renamed"], json!([]));
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn compare_refuses_documents_of_different_families() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-compare-kinds-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let document = dir.join("notes.md");
+    fs::write(&document, b"# Notes\n").expect("write markdown");
+    let pdf = two_page_pdf(&dir);
+
+    let error = office.compare(&document, &pdf).expect_err("cross-family compare");
+    assert_eq!(error.code(), "kind-mismatch");
+    assert!(error.is_usage());
+    let missing = office.compare(&document, &dir.join("gone.md")).expect_err("missing right side");
+    assert_eq!(missing.code(), "not-found");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn replace_saves_a_word_document_in_place() {
     let office = Office::new();
     let dir = std::env::temp_dir().join(format!("open-office-replace-word-{}", std::process::id()));

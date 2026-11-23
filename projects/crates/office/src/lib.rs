@@ -182,7 +182,7 @@ impl Office {
     pub fn capabilities(&self) -> Value {
         json!({
             "engine": { "package": "open-office", "version": VERSION },
-            "commands": ["probe", "inspect", "convert", "open", "formats", "stats", "totals", "outline", "search", "replace", "render", "capabilities", "version"],
+            "commands": ["probe", "inspect", "convert", "open", "formats", "stats", "totals", "outline", "compare", "search", "replace", "render", "capabilities", "version"],
             "modules": {
                 "word": open_word_document::capabilities(),
                 "excel": open_excel_workbook::capabilities(),
@@ -477,6 +477,51 @@ impl Office {
             }
         }
         Ok(json!({ "outlined": outlined, "failed": failed, "results": results }))
+    }
+
+    /// Diffs the outlines of two documents of the same family.
+    ///
+    /// Sections come from the owning engine's own outline projection, in
+    /// document order: word heading titles (nested children flattened),
+    /// workbook sheet names, slide titles and PDF bookmark titles. The report
+    /// aligns the two lists with a longest-common-subsequence walk: titles only
+    /// in the right document are `added`, titles only in the left are
+    /// `removed`, and a removed title paired with an added title inside the
+    /// same change block is reported as `renamed`. Two documents of different
+    /// families fail with `kind-mismatch`; anything the single-document
+    /// [`Office::outline`] rejects (missing file, wrong container) applies here
+    /// too.
+    pub fn compare(&self, left: &Path, right: &Path) -> Result<Value, OfficeError> {
+        let left_kind = Kind::of_path(left)?;
+        let right_kind = Kind::of_path(right)?;
+        if left_kind != right_kind {
+            return Err(OfficeError::usage(format!(
+                "`compare` needs two documents of the same family; the left is {}, the right is {}",
+                left_kind.label(),
+                right_kind.label()
+            ))
+            .with_code("kind-mismatch"));
+        }
+        let left_sections = self.outline_sections(left)?;
+        let right_sections = self.outline_sections(right)?;
+        let (added, removed, renamed) = diff_sections(&left_sections, &right_sections);
+        Ok(json!({
+            "kind": left_kind.label(),
+            "left": { "path": left.display().to_string(), "sections": left_sections.len() },
+            "right": { "path": right.display().to_string(), "sections": right_sections.len() },
+            "identical": added.is_empty() && removed.is_empty() && renamed.is_empty(),
+            "added": added,
+            "removed": removed,
+            "renamed": renamed,
+        }))
+    }
+
+    /// Collects the outline titles of one document, in document order.
+    fn outline_sections(&self, path: &Path) -> Result<Vec<String>, OfficeError> {
+        let report = self.outline(path, false, None)?;
+        let mut titles = Vec::new();
+        collect_titles(&report["outline"], &mut titles);
+        Ok(titles)
     }
 
     /// Searches the text one document owns and reports hits with stable locations.
@@ -1696,5 +1741,106 @@ fn accumulate_totals(family: &mut Value, totals: &Value) {
     }
     let documents = target.get("documents").and_then(Value::as_u64).unwrap_or_default() + 1;
     target.insert("documents".to_string(), json!(documents));
+}
+
+/// Walks one engine outline projection and collects its section titles in
+/// document order: word heading `title`s (with `children` flattened), workbook
+/// sheet `name`s, slide `title`s and PDF bookmark `title`s.
+fn collect_titles(value: &Value, titles: &mut Vec<String>) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                collect_titles(item, titles);
+            }
+        }
+        Value::Object(map) => {
+            if let Some(title) = map.get("title").and_then(Value::as_str) {
+                titles.push(title.to_owned());
+            }
+            else if let Some(name) = map.get("name").and_then(Value::as_str) {
+                titles.push(name.to_owned());
+            }
+            for key in ["items", "children", "sheets", "slides", "bookmarks"] {
+                if let Some(list) = map.get(key) {
+                    collect_titles(list, titles);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Aligns two ordered section lists with a longest-common-subsequence walk.
+///
+/// Inside each maximal change block the removed titles are paired positionally
+/// with the added titles and reported as renames; unpaired entries stay in the
+/// `added` and `removed` lists.
+fn diff_sections(left: &[String], right: &[String]) -> (Vec<String>, Vec<String>, Vec<Value>) {
+    let (n, m) = (left.len(), right.len());
+    let mut table = vec![vec![0u32; m + 1]; n + 1];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            table[i][j] = if left[i] == right[j] {
+                table[i + 1][j + 1] + 1
+            }
+            else {
+                table[i + 1][j].max(table[i][j + 1])
+            };
+        }
+    }
+    let mut script = Vec::with_capacity(n + m);
+    let (mut i, mut j) = (0usize, 0usize);
+    while i < n && j < m {
+        if left[i] == right[j] {
+            script.push(Edit::Equal);
+            i += 1;
+            j += 1;
+        }
+        else if table[i + 1][j] >= table[i][j + 1] {
+            script.push(Edit::Removed(i));
+            i += 1;
+        }
+        else {
+            script.push(Edit::Added(j));
+            j += 1;
+        }
+    }
+    script.extend((i..n).map(Edit::Removed));
+    script.extend((j..m).map(Edit::Added));
+
+    let mut added = Vec::new();
+    let mut removed = Vec::new();
+    let mut renamed = Vec::new();
+    let mut index = 0;
+    while index < script.len() {
+        if matches!(script[index], Edit::Equal) {
+            index += 1;
+            continue;
+        }
+        let mut block_removed = Vec::new();
+        let mut block_added = Vec::new();
+        while index < script.len() && !matches!(script[index], Edit::Equal) {
+            match script[index] {
+                Edit::Removed(at) => block_removed.push(left[at].clone()),
+                Edit::Added(at) => block_added.push(right[at].clone()),
+                Edit::Equal => {}
+            }
+            index += 1;
+        }
+        let paired = block_removed.len().min(block_added.len());
+        for (from, to) in block_removed.iter().take(paired).zip(block_added.iter().take(paired)) {
+            renamed.push(json!({ "from": from, "to": to }));
+        }
+        removed.extend(block_removed.into_iter().skip(paired));
+        added.extend(block_added.into_iter().skip(paired));
+    }
+    (added, removed, renamed)
+}
+
+/// One step of an outline alignment between two documents.
+enum Edit {
+    Equal,
+    Removed(usize),
+    Added(usize),
 }
 
