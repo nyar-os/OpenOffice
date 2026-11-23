@@ -232,6 +232,7 @@ fn compare(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
     let mut ignore_case = false;
     let mut depth = None;
     let mut points = false;
+    let mut notes = false;
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
@@ -245,6 +246,7 @@ fn compare(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
                 );
             }
             "--points" => points = true,
+            "--notes" => notes = true,
             flag if flag.starts_with('-') => {
                 return Err(OfficeError::usage(format!("unknown option `{flag}`")));
             }
@@ -255,7 +257,7 @@ fn compare(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
     if paths.len() != 2 {
         return Err(OfficeError::usage("`compare` needs exactly two document paths"));
     }
-    print_json(&office.compare_at(&paths[0], &paths[1], ignore_case, depth, points)?)
+    print_json(&office.compare_at(&paths[0], &paths[1], ignore_case, depth, points, notes)?)
 }
 
 /// Parses `search` paths and options, reporting one document or a batch.
@@ -522,7 +524,7 @@ fn usage() {
          \x20 open-office totals <file>...\n\
          \x20 open-office metadata <file>...\n\
          \x20 open-office outline <file>... [--points] [--depth <n>]\n\
-         \x20 open-office compare <left> <right> [--ignore-case] [--depth <n>] [--points]\n\
+         \x20 open-office compare <left> <right> [--ignore-case] [--depth <n>] [--points | --notes]\n\
          \x20 open-office search <file>... --text <query> [--limit <n>]\n\
          \x20 open-office replace <file>... --find <query> --with <replacement> [--ignore-case] [--limit <n>] [--dry-run]\n\
          \x20 open-office render <file> [--sheet <name>] [--page <n> | --pages <list>] [--out <file> | --out-dir <dir>] [--overwrite]\n\
@@ -550,6 +552,7 @@ fn usage() {
          \x20 open-office compare draft.docx final.docx\n\
          \x20 open-office compare b.docx c.docx --depth 2\n\
          \x20 open-office compare before.pptx after.pptx --points\n\
+         \x20 open-office compare before.pptx after.pptx --notes\n\
          \x20 open-office outline a.docx b.pdf c.pptx\n\
          \x20 open-office search report.docx --text invoice\n\
          \x20 open-office search a.docx b.pdf c.pptx --text total --limit 10\n\

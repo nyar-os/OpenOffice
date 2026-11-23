@@ -711,17 +711,17 @@ fn compare_can_limit_itself_to_shallow_headings() {
     let right = dir.join("final.md");
     fs::write(&right, b"# Intro\n\n## Summary\n\n### Deep\n").expect("write final");
 
-    let shallow = office.compare_at(&left, &right, false, Some(1), false).expect("shallow compare");
+    let shallow = office.compare_at(&left, &right, false, Some(1), false, false).expect("shallow compare");
     assert_eq!(shallow["depth"], json!(1));
     assert_eq!(shallow["left"]["sections"], json!(1));
     assert_eq!(shallow["right"]["sections"], json!(1));
     assert_eq!(shallow["identical"], json!(true), "the deeper rename is below the depth");
 
-    let deeper = office.compare_at(&left, &right, false, Some(2), false).expect("deeper compare");
+    let deeper = office.compare_at(&left, &right, false, Some(2), false, false).expect("deeper compare");
     assert_eq!(deeper["left"]["sections"], json!(2));
     assert_eq!(deeper["renamed"], json!([{ "from": "Details", "to": "Summary" }]));
 
-    let zero = office.compare_at(&left, &right, false, Some(0), false).expect_err("depth zero");
+    let zero = office.compare_at(&left, &right, false, Some(0), false, false).expect_err("depth zero");
     assert_eq!(zero.code(), "invalid-depth");
     let _ = fs::remove_dir_all(&dir);
 }
@@ -756,11 +756,11 @@ fn compare_expands_presentation_points_when_asked() {
     let before = build("before.project", "Alpha");
     let after = build("after.project", "Beta");
 
-    let titles = office.compare_at(&before, &after, false, None, false).expect("title compare");
+    let titles = office.compare_at(&before, &after, false, None, false, false).expect("title compare");
     assert_eq!(titles["points"], json!(false));
     assert_eq!(titles["identical"], json!(true), "slide titles alone are unchanged");
 
-    let points = office.compare_at(&before, &after, false, None, true).expect("point compare");
+    let points = office.compare_at(&before, &after, false, None, true, false).expect("point compare");
     assert_eq!(points["points"], json!(true));
     assert_eq!(points["left"]["sections"], json!(1));
     assert_eq!(
@@ -771,8 +771,83 @@ fn compare_expands_presentation_points_when_asked() {
 
     let word = dir.join("plain.md");
     fs::write(&word, b"# Plan\n").expect("write word");
-    let unsupported = office.compare_at(&word, &word, false, None, true).expect_err("points on word");
+    let unsupported = office.compare_at(&word, &word, false, None, true, false).expect_err("points on word");
     assert_eq!(unsupported.code(), "unsupported-option");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn compare_expands_presentation_notes_when_asked() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-compare-notes-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let build = |name: &str, notes: Option<&str>| {
+        let mut deck = open_ppt_deck::create(open_ppt_deck::CreateRequest {
+            title: Some("Notes".to_owned()),
+            size: None,
+            theme: None,
+            slides: vec!["Plan".to_owned()],
+        })
+        .expect("create deck");
+        let slide = open_ppt_deck::summary(&deck)["slides"][0]["id"].as_str().expect("slide id").to_owned();
+        if let Some(notes) = notes {
+            open_ppt_deck::edit::edit(
+                &mut deck,
+                &json!({ "operations": [{ "op": "slide.setNotes", "slideId": slide, "text": notes }] }),
+            )
+            .expect("set notes");
+        }
+        let path = dir.join(name);
+        open_ppt_deck::save(&deck, &path, true).expect("save deck");
+        path
+    };
+    let before = build("before.project", Some("Alpha\n  Beta \n\n"));
+    let after = build("after.project", Some("Alpha\nGamma"));
+
+    let titles = office.compare_at(&before, &after, false, None, false, false).expect("title compare");
+    assert_eq!(titles["identical"], json!(true), "slide titles alone are unchanged");
+
+    let notes = office.compare_at(&before, &after, false, None, false, true).expect("note compare");
+    assert_eq!(notes["notes"], json!(true));
+    assert_eq!(notes["points"], json!(false));
+    assert_eq!(notes["left"]["sections"], json!(2), "blank lines are dropped and lines are trimmed");
+    assert_eq!(notes["right"]["sections"], json!(2));
+    assert_eq!(
+        notes["renamed"],
+        json!([{ "from": "Plan · Beta", "to": "Plan · Gamma" }]),
+        "note lines participate in the diff"
+    );
+
+    let plain = build("plain.project", None);
+    let fallback = office.compare_at(&plain, &plain, false, None, false, true).expect("fallback compare");
+    assert_eq!(fallback["left"]["sections"], json!(1));
+    assert_eq!(fallback["identical"], json!(true), "a slide without notes falls back to its title");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn compare_refuses_notes_for_other_families_and_points() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-compare-notes-guards-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let word = dir.join("plain.md");
+    fs::write(&word, b"# Plan\n").expect("write word");
+    let unsupported = office.compare_at(&word, &word, false, None, false, true).expect_err("notes on word");
+    assert_eq!(unsupported.code(), "unsupported-option");
+    assert!(unsupported.is_usage());
+
+    let deck = open_ppt_deck::create(open_ppt_deck::CreateRequest {
+        title: Some("Plan".to_owned()),
+        size: None,
+        theme: None,
+        slides: vec!["Plan".to_owned()],
+    })
+    .expect("create deck");
+    open_ppt_deck::save(&deck, &dir.join("plan.project"), true).expect("save deck");
+    let plan = dir.join("plan.project");
+    let mixed = office.compare_at(&plan, &plan, false, None, true, true).expect_err("points and notes together");
+    assert_eq!(mixed.code(), "unsupported-option");
+    assert!(mixed.message().contains("mutually exclusive"));
     let _ = fs::remove_dir_all(&dir);
 }
 

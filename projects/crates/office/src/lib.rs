@@ -588,7 +588,7 @@ impl Office {
     /// pure case change is not reported as a rename. Added and removed titles
     /// keep their original spelling from the side they came from.
     pub fn compare_with(&self, left: &Path, right: &Path, ignore_case: bool) -> Result<Value, OfficeError> {
-        self.compare_at(left, right, ignore_case, None, false)
+        self.compare_at(left, right, ignore_case, None, false, false)
     }
 
     /// Compares two same-family outlines at an optional heading depth.
@@ -599,6 +599,9 @@ impl Office {
     /// same way [`Office::outline`] does. With `points`, presentation slides are
     /// expanded into one entry per talking point so body changes show up as
     /// added, removed or renamed entries; other families reject the option.
+    /// With `notes`, presentation slides are expanded into one entry per
+    /// speaker-note line the same way; `points` and `notes` are mutually
+    /// exclusive.
     pub fn compare_at(
         &self,
         left: &Path,
@@ -606,6 +609,7 @@ impl Office {
         ignore_case: bool,
         depth: Option<u8>,
         points: bool,
+        notes: bool,
     ) -> Result<Value, OfficeError> {
         let left_kind = Kind::of_path(left)?;
         let right_kind = Kind::of_path(right)?;
@@ -617,11 +621,17 @@ impl Office {
             ))
             .with_code("kind-mismatch"));
         }
+        if points && notes {
+            return Err(OfficeError::usage("`--points` and `--notes` are mutually exclusive").with_code("unsupported-option"));
+        }
         if points && left_kind != Kind::Presentation {
             return Err(OfficeError::usage("`--points` only applies to presentations").with_code("unsupported-option"));
         }
-        let left_sections = self.outline_sections(left, depth, points)?;
-        let right_sections = self.outline_sections(right, depth, points)?;
+        if notes && left_kind != Kind::Presentation {
+            return Err(OfficeError::usage("`--notes` only applies to presentations").with_code("unsupported-option"));
+        }
+        let left_sections = self.outline_sections(left, depth, points, notes)?;
+        let right_sections = self.outline_sections(right, depth, points, notes)?;
         let (added, removed, renamed, moved) = diff_sections(&left_sections, &right_sections, ignore_case);
         Ok(json!({
             "kind": left_kind.label(),
@@ -630,6 +640,7 @@ impl Office {
             "ignoreCase": ignore_case,
             "depth": depth,
             "points": points,
+            "notes": notes,
             "identical": added.is_empty() && removed.is_empty() && renamed.is_empty() && moved.is_empty(),
             "added": added,
             "removed": removed,
@@ -642,8 +653,16 @@ impl Office {
     ///
     /// With `points`, a presentation contributes one `Title · point` entry per
     /// slide point (or the title alone when the slide has no points), so point
-    /// changes participate in the diff.
-    fn outline_sections(&self, path: &Path, depth: Option<u8>, points: bool) -> Result<Vec<String>, OfficeError> {
+    /// changes participate in the diff. With `notes`, each slide contributes
+    /// one `Title · line` entry per non-empty speaker-note line (or the title
+    /// alone when the slide has no notes), and the two modes never mix.
+    fn outline_sections(
+        &self,
+        path: &Path,
+        depth: Option<u8>,
+        points: bool,
+        notes: bool,
+    ) -> Result<Vec<String>, OfficeError> {
         let report = self.outline(path, points, depth)?;
         if points {
             let mut entries = Vec::new();
@@ -664,6 +683,34 @@ impl Office {
                                 format!("{title} · {point}")
                             });
                         }
+                    }
+                }
+            }
+            if !entries.is_empty() {
+                return Ok(entries);
+            }
+        }
+        if notes {
+            let mut entries = Vec::new();
+            if let Some(slides) = report.pointer("/outline/slides").and_then(Value::as_array) {
+                for slide in slides {
+                    let title = slide.get("title").and_then(Value::as_str).unwrap_or("");
+                    let lines: Vec<&str> = slide
+                        .get("notes")
+                        .and_then(Value::as_str)
+                        .map(|notes| notes.lines().map(str::trim).filter(|line| !line.is_empty()).collect())
+                        .unwrap_or_default();
+                    if lines.is_empty() {
+                        entries.push(title.to_owned());
+                        continue;
+                    }
+                    for line in lines {
+                        entries.push(if title.is_empty() {
+                            line.to_owned()
+                        }
+                        else {
+                            format!("{title} · {line}")
+                        });
                     }
                 }
             }
