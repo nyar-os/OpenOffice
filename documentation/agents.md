@@ -25,7 +25,7 @@ open-office formats
 | `compare <left> <right>` | exactly two paths, optional `--ignore-case` / `-i`, `--depth <n>` | Outline-level diff of two documents of the same family: word heading titles, workbook sheet names, slide titles or PDF bookmark titles, aligned in document order into `added`, `removed`, `renamed` and `moved` sections. `--ignore-case` folds case, so a pure case change is not a rename. `--depth` keeps only word headings and PDF bookmarks at that level or shallower and is rejected for other families. Different families fail with `kind-mismatch`. |
 | `search <file>...` | `--text <query>` / `-t` (required), `--limit <n>` (optional) | Case-sensitive in every family. Default limit is 100, clamped to 1-500. One path returns the single envelope, more paths return a batch report. |
 | `replace <file>...` | `--find <query>` / `-f` (required), `--with <replacement>` / `-w` (required), `--ignore-case` / `-i`, `--limit <n>`, `--dry-run` (optional) | Find-and-replace saved in place for word documents, workbooks and presentations; PDFs fail with `unsupported-target`. Matching is case-sensitive unless `--ignore-case`. `--dry-run` counts matches but writes nothing. One path returns the single envelope, more paths return a batch report. |
-| `render <file>...` | `--sheet <name>` / `-s` (workbooks), `--page <n>` / `-p` (presentations), `--out <file>` / `-o`, `--out-dir <dir>`, `--overwrite` | SVG only. `--out` needs exactly one page; `--out-dir` writes `page-<n>.svg` per page. Several paths require `--out-dir` and get one subdirectory per source stem. |
+| `render <file>...` | `--sheet <name>` / `-s` (workbooks), `--page <n>` / `-p` or `--pages <list>` (presentations), `--out <file>` / `-o`, `--out-dir <dir>`, `--overwrite` | SVG only. `--out` needs exactly one page; `--out-dir` writes `page-<n>.svg` per page. Several paths require `--out-dir` and get one subdirectory per source stem. |
 | `formats` | none | Import and export matrix. |
 | `capabilities` | none | Capability matrix. |
 | `convert <file>` | `--format <f>` / `-f` (required), `--out <file>` / `-o` (required), `--overwrite`, `--pages <ranges>` | Single-input form. `--pages` is PDF-only. |
@@ -324,7 +324,7 @@ in input order and exits non-zero when any document failed.
 }
 ```
 
-A workbook yields exactly one page for the selected sheet (`sheet`, `sheetId`, `svg`); a presentation yields one page per slide. `--page` is one-based, selects a single presentation page and is refused for workbooks; `--sheet` is refused for presentations. `--out` writes the single selected SVG and fails with `multiple-pages` when the selection has more than one page; `--out-dir` writes every selected page as `page-<n>.svg`, numbered from the one-based page index. Both refuse existing targets unless `--overwrite` is passed and cannot be combined. Word and PDF are refused with `unsupported-target` because neither bundled engine exposes an SVG renderer in this build.
+A workbook yields exactly one page for the selected sheet (`sheet`, `sheetId`, `svg`); a presentation yields one page per slide. `--page` is one-based, selects a single presentation page and is refused for workbooks; `--pages` selects several presentation pages in the requested order (`2,1` renders slide two then slide one) and cannot be combined with `--page`. `--sheet` is refused for presentations. `--out` writes the single selected SVG and fails with `multiple-pages` when the selection has more than one page; `--out-dir` writes every selected page as `page-<n>.svg`, numbered from the one-based page index. Both refuse existing targets unless `--overwrite` is passed and cannot be combined. Word and PDF are refused with `unsupported-target` because neither bundled engine exposes an SVG renderer in this build.
 
 With more than one path, `render` writes into `<out-dir>/<source stem>/` and returns
 
@@ -419,8 +419,8 @@ After routing, `inspect`, `stats`, `totals`, `metadata`, `outline`, `search`, `r
 - `--overwrite` is required to replace an existing output. There is no implicit replacement.
 - `--points` applies to presentations only.
 - `inspect --checks` names come from the owning engine's `checks` map in `capabilities`; an unknown name fails that input. PDF has no selectable checks.
-- `render` writes SVG only; `--sheet` is workbook-only and `--page` is presentation-only. `--out` needs a single selected page, while `--out-dir` writes every selected page. A batch needs `--out-dir` and writes one subdirectory per source stem.
-- `--pages` applies to single-input PDF text conversion only; it cannot be combined with multiple inputs.
+- `render` writes SVG only; `--sheet` is workbook-only and `--page` / `--pages` are presentation-only and mutually exclusive. `--out` needs a single selected page, while `--out-dir` writes every selected page. A batch needs `--out-dir` and writes one subdirectory per source stem.
+- `--pages` in `convert` applies to single-input PDF text conversion only; in `render` it selects presentation pages. Neither can be combined with multiple inputs in `convert`, nor with `--page` in `render`.
 - Search is case-sensitive everywhere. A query that works in one family will not silently become case-insensitive in another.
 - `replace` writes changed documents back to their own path; PDFs have no replacement route. A `--find` that matches nothing leaves the file untouched.
 - PDF search reports lines in extracted Markdown, not PDF pages.

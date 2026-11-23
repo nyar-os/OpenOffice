@@ -997,6 +997,30 @@ fn render_lists_presentation_pages_and_selects_one() {
     let error = office.render(&path, &RenderOptions { page: Some(3), ..RenderOptions::default() }).expect_err("range");
     assert_eq!(error.code(), "page-out-of-range");
 
+    let ordered =
+        office.render(&path, &RenderOptions { pages: Some("2,1".to_owned()), ..RenderOptions::default() }).expect("pages");
+    assert_eq!(ordered["pages"].as_array().expect("pages").len(), 2);
+    assert_eq!(ordered["pages"][0]["index"], json!(1), "requested order is kept");
+    assert_eq!(ordered["pages"][1]["index"], json!(0));
+
+    let outside =
+        office.render(&path, &RenderOptions { pages: Some("3".to_owned()), ..RenderOptions::default() }).expect_err("pages range");
+    assert_eq!(outside.code(), "invalid-pages");
+    let both = office
+        .render(&path, &RenderOptions { page: Some(1), pages: Some("1".to_owned()), ..RenderOptions::default() })
+        .expect_err("ambiguous selection");
+    assert_eq!(both.code(), "unsupported-option");
+    let workbook = dir.join("book.oexcel");
+    open_excel_workbook::create(&json!({ "title": "Render" })).map(|created| {
+        let handle = created["handle"].as_u64().expect("handle");
+        open_excel_workbook::save(handle, &workbook, true).expect("save workbook");
+        open_excel_workbook::close(handle).expect("close");
+    }).expect("create workbook");
+    let unsupported = office
+        .render(&workbook, &RenderOptions { pages: Some("1".to_owned()), ..RenderOptions::default() })
+        .expect_err("pages on a workbook");
+    assert_eq!(unsupported.code(), "unsupported-option");
+
     let out = dir.join("one.svg");
     let error =
         office.render(&path, &RenderOptions { out: Some(out), ..RenderOptions::default() }).expect_err("ambiguous out");

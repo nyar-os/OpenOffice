@@ -360,6 +360,7 @@ fn render(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
     let mut paths: Vec<String> = Vec::new();
     let mut sheet = None;
     let mut page = None;
+    let mut pages = None;
     let mut out = None;
     let mut out_dir = None;
     let mut overwrite = false;
@@ -372,6 +373,7 @@ fn render(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
                 page = Some(value.parse::<u32>().map_err(|_| OfficeError::usage("`--page` needs a positive integer"))?);
             }
             "--out" | "-o" => out = Some(PathBuf::from(value_of(arguments, &mut index, "--out")?)),
+            "--pages" => pages = Some(value_of(arguments, &mut index, "--pages")?),
             "--out-dir" => out_dir = Some(PathBuf::from(value_of(arguments, &mut index, "--out-dir")?)),
             "--overwrite" => overwrite = true,
             value if value.starts_with('-') => {
@@ -384,7 +386,7 @@ fn render(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
     if paths.is_empty() {
         return Err(OfficeError::usage("a document path is required"));
     }
-    let options = RenderOptions { sheet, page, out, out_dir, overwrite };
+    let options = RenderOptions { sheet, page, pages, out, out_dir, overwrite };
     if paths.len() == 1 {
         return print_json(&office.render(Path::new(&paths[0]), &options)?);
     }
@@ -521,8 +523,8 @@ fn usage() {
          \x20 open-office compare <left> <right> [--ignore-case] [--depth <n>]\n\
          \x20 open-office search <file>... --text <query> [--limit <n>]\n\
          \x20 open-office replace <file>... --find <query> --with <replacement> [--ignore-case] [--limit <n>] [--dry-run]\n\
-         \x20 open-office render <file> [--sheet <name>] [--page <n>] [--out <file> | --out-dir <dir>] [--overwrite]\n\
-         \x20 open-office render <file>... --out-dir <dir> [--sheet <name> | --page <n>] [--overwrite]\n\
+         \x20 open-office render <file> [--sheet <name>] [--page <n> | --pages <list>] [--out <file> | --out-dir <dir>] [--overwrite]\n\
+         \x20 open-office render <file>... --out-dir <dir> [--sheet <name> | --page <n> | --pages <list>] [--overwrite]\n\
          \x20 open-office formats\n\
          \x20 open-office convert <file> --format <format> --out <file> [--overwrite] [--pages <ranges>]\n\
          \x20 open-office convert <file>... --format <format> --out-dir <dir> [--overwrite]\n\
@@ -552,6 +554,7 @@ fn usage() {
          \x20 open-office replace a.docx b.xlsx --find invoice --with statement --ignore-case\n\
          \x20 open-office render budget.xlsx --out sheet.svg\n\
          \x20 open-office render deck.pptx --page 2 --out slide-2.svg\n\
+         \x20 open-office render deck.pptx --pages 1,3-5 --out-dir preview/\n\
          \x20 open-office render deck.pptx --out-dir preview/\n\
          \x20 open-office render budget.xlsx deck.pptx --out-dir preview/\n\
          \x20 open-office formats\n\

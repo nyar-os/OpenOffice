@@ -150,6 +150,8 @@ pub struct RenderOptions {
     pub sheet: Option<String>,
     /// One-based presentation page; renders every page when omitted.
     pub page: Option<u32>,
+    /// One-based presentation pages such as `1,3-5`; renders every page when omitted.
+    pub pages: Option<String>,
     /// Writes the selected SVG here instead of only reporting it.
     pub out: Option<PathBuf>,
     /// Writes every selected page as `page-<n>.svg` into this directory.
@@ -953,8 +955,9 @@ impl Office {
         verify_container(path, kind)?;
         let (revision, pages, losses, total) = match kind {
             Kind::Excel => {
-                if options.page.is_some() {
-                    return Err(OfficeError::usage("`--page` only applies to presentations").with_code("unsupported-option"));
+                if options.page.is_some() || options.pages.is_some() {
+                    return Err(OfficeError::usage("`--page` and `--pages` only apply to presentations")
+                        .with_code("unsupported-option"));
                 }
                 let opened = open_excel_workbook::open(path).map_err(runtime)?;
                 let handle = handle_of(&opened)?;
@@ -974,12 +977,16 @@ impl Office {
                 if options.sheet.is_some() {
                     return Err(OfficeError::usage("`--sheet` only applies to workbooks").with_code("unsupported-option"));
                 }
+                if options.page.is_some() && options.pages.is_some() {
+                    return Err(OfficeError::usage("`--page` and `--pages` are mutually exclusive")
+                        .with_code("unsupported-option"));
+                }
                 let loaded = load_deck(path)?;
                 let report = open_ppt_deck::render(&loaded.deck).map_err(runtime)?;
                 let all = report.get("pages").and_then(Value::as_array).cloned().unwrap_or_default();
                 let total = all.len();
-                let pages = match options.page {
-                    Some(number) => {
+                let pages = match (&options.page, options.pages.as_deref()) {
+                    (Some(number), _) => {
                         let index = number.checked_sub(1).ok_or_else(|| {
                             OfficeError::usage("`--page` starts at 1").with_code("page-out-of-range")
                         })? as usize;
@@ -989,7 +996,11 @@ impl Office {
                         })?;
                         vec![page]
                     }
-                    None => all,
+                    (None, Some(ranges)) => parse_page_ranges(ranges, total)?
+                        .into_iter()
+                        .map(|page| all[page - 1].clone())
+                        .collect(),
+                    (None, None) => all,
                 };
                 let losses = report.get("losses").cloned().unwrap_or_else(|| json!([]));
                 (report.get("revision").cloned().unwrap_or(Value::Null), pages, losses, total)
@@ -1074,6 +1085,7 @@ impl Office {
             let per_file = RenderOptions {
                 sheet: options.sheet.clone(),
                 page: options.page,
+                pages: options.pages.clone(),
                 out: None,
                 out_dir: Some(target.clone()),
                 overwrite: options.overwrite,
