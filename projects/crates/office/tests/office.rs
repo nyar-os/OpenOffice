@@ -184,6 +184,61 @@ fn stats_many_reports_each_input_in_order() {
 }
 
 #[test]
+fn totals_aggregates_statistics_across_families() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-totals-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let first = dir.join("a.md");
+    fs::write(&first, b"# Alpha\n\none two three\n").expect("write first");
+    let second = dir.join("b.md");
+    fs::write(&second, b"# Beta\n\nfour five\n").expect("write second");
+    let created = open_excel_workbook::create(&json!({ "title": "Totals" })).expect("create");
+    let handle = handle_of(&created).expect("handle");
+    open_excel_workbook::edit(
+        handle,
+        &json!({ "operations": [{ "op": "cell.set", "sheet": "Sheet1", "reference": "A1", "value": 42 }] }),
+    )
+    .expect("seed");
+    let sheet = dir.join("budget.oexcel");
+    open_excel_workbook::save(handle, &sheet, true).expect("save");
+    let _ = open_excel_workbook::close(handle);
+    let deck = open_ppt_deck::create(open_ppt_deck::CreateRequest {
+        title: Some("Totals".to_owned()),
+        size: None,
+        theme: None,
+        slides: vec!["Intro".to_owned(), "Plan".to_owned()],
+    })
+    .expect("create deck");
+    let slides = dir.join("deck.project");
+    open_ppt_deck::save(&deck, &slides, true).expect("save deck");
+    let pdf = two_page_pdf(&dir);
+
+    let inputs = vec![first, second, sheet, slides, pdf, PathBuf::from("missing-totals.docx")];
+    let report = office.totals(&inputs).expect("totals batch");
+    assert_eq!(report["counted"], json!(5));
+    assert_eq!(report["failed"], json!(1));
+    let families = &report["families"];
+    assert_eq!(families["word"]["documents"], json!(2));
+    assert_eq!(families["word"]["words"], json!(7));
+    assert_eq!(families["word"]["headings"], json!(2));
+    assert_eq!(families["word"]["paragraphs"], json!(2));
+    assert_eq!(families["excel"]["documents"], json!(1));
+    assert_eq!(families["excel"]["sheets"], json!(1));
+    assert_eq!(families["excel"]["cells"], json!(1));
+    assert_eq!(families["presentation"]["documents"], json!(1));
+    assert_eq!(families["presentation"]["slides"], json!(2));
+    assert_eq!(families["pdf"]["documents"], json!(1));
+    assert_eq!(families["pdf"]["pages"], json!(2));
+    let results = report["results"].as_array().expect("results array");
+    assert_eq!(results[0]["totals"]["words"], json!(4));
+    assert_eq!(results[5]["ok"], json!(false));
+    assert_eq!(results[5]["code"], json!("not-found"));
+
+    assert!(office.totals(&[]).expect_err("empty inputs").is_usage());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn inspect_many_reports_each_input_in_order() {
     let office = Office::new();
     let dir = std::env::temp_dir().join(format!("open-office-inspect-many-{}", std::process::id()));

@@ -45,6 +45,7 @@ fn run(arguments: &[String]) -> Result<(), OfficeError> {
         "probe" | "inspect-file" | "inspect_file" => probe(&office, rest),
         "inspect" => inspect(&office, rest),
         "stats" => stats(&office, rest),
+        "totals" => totals(&office, rest),
         "outline" => outline(&office, rest),
         "search" => search(&office, rest),
         "replace" => replace(&office, rest),
@@ -87,6 +88,22 @@ fn stats(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
         return print_json(&office.stats(&paths[0])?);
     }
     let report = office.stats_many(&paths)?;
+    print_json(&report)?;
+    let failed = report.get("failed").and_then(Value::as_u64).unwrap_or_default();
+    if failed > 0 {
+        return Err(OfficeError::runtime(format!("{failed} of {} documents failed", paths.len())));
+    }
+    Ok(())
+}
+
+/// Parses `totals` paths and reports one aggregated suite-level summary.
+///
+/// Every document contributes the numbers its owning engine reports; a failing
+/// document is counted in `failed` and the command exits non-zero after
+/// printing the report.
+fn totals(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
+    let paths = document_paths(arguments, "a document path is required")?;
+    let report = office.totals(&paths)?;
     print_json(&report)?;
     let failed = report.get("failed").and_then(Value::as_u64).unwrap_or_default();
     if failed > 0 {
@@ -452,6 +469,7 @@ fn usage() {
          \x20 open-office probe <file>...\n\
          \x20 open-office inspect <file>... [--checks <list>]\n\
          \x20 open-office stats <file>...\n\
+         \x20 open-office totals <file>...\n\
          \x20 open-office outline <file>... [--points] [--depth <n>]\n\
          \x20 open-office search <file>... --text <query> [--limit <n>]\n\
          \x20 open-office replace <file>... --find <query> --with <replacement> [--ignore-case] [--limit <n>]\n\
@@ -472,6 +490,7 @@ fn usage() {
          \x20 open-office inspect a.docx b.pdf c.xlsx\n\
          \x20 open-office stats report.docx\n\
          \x20 open-office stats a.docx b.pdf c.xlsx\n\
+         \x20 open-office totals a.docx b.pdf c.xlsx deck.pptx\n\
          \x20 open-office outline report.docx\n\
          \x20 open-office outline deck.pptx --points\n\
          \x20 open-office outline report.docx --depth 2\n\

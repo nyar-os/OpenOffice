@@ -19,6 +19,7 @@ open-office formats
 | `probe <file>...` | none | Reads the bytes; does not route by extension and does not open the document. One path returns the single envelope, more paths return a batch report. Aliases: `inspect-file`, `inspect_file`. |
 | `inspect <file>...` | `--checks <list>` (optional) | Dispatches to the owning engine; one path returns the single envelope, more paths return a batch report. `--checks` is a comma-separated list of rule-check names and applies to Word, Excel and presentation inputs. |
 | `stats <file>...` | none | Lightweight per-family statistics; one path returns the single envelope, more paths return a batch report. |
+| `totals <file>...` | none | Aggregates the statistics of every input into one suite-level report with per-family sums; a failing document is counted in `failed` and does not stop the batch. |
 | `outline <file>...` | `--points` (presentations), `--depth <n>` (word and PDF) | `--points` is accepted only for presentations. `--depth` keeps word headings and PDF bookmarks at that level or shallower and is rejected for other families. One path returns the single envelope, more paths return a batch report. |
 | `search <file>...` | `--text <query>` / `-t` (required), `--limit <n>` (optional) | Case-sensitive in every family. Default limit is 100, clamped to 1-500. One path returns the single envelope, more paths return a batch report. |
 | `replace <file>...` | `--find <query>` / `-f` (required), `--with <replacement>` / `-w` (required), `--ignore-case` / `-i`, `--limit <n>` (optional) | Find-and-replace saved in place for word documents and workbooks; presentations and PDFs fail with `unsupported-target`. Matching is case-sensitive unless `--ignore-case`. One path returns the single envelope, more paths return a batch report. |
@@ -34,7 +35,7 @@ Unknown options are usage errors. `convert` lowercases `--format`, and batch tar
 
 `open` is a routing convenience, not an editor. It checks the extension and that the file exists, then hands the file to the platform. A missing opener or a non-zero exit reports `open-failed`; use the individual product CLI (`open-word open`, `open-excel open`, `open-ppt open`, `open-pdf open`) when the product GUI or reader should handle the file.
 
-Exit codes: `0` success, `2` usage error, `1` runtime error. A batch conversion, a multi-file `probe`, `stats`, `outline`, `search`, `replace` or `inspect` prints its JSON report and then exits `1` when `failed` is greater than zero.
+Exit codes: `0` success, `2` usage error, `1` runtime error. A batch conversion, a multi-file `probe`, `stats`, `totals`, `outline`, `search`, `replace` or `inspect` prints its JSON report and then exits `1` when `failed` is greater than zero.
 
 ## Report envelopes
 
@@ -70,7 +71,7 @@ when the detector quoted some.
 ```json
 {
   "engine": { "package": "open-office", "version": "0.1.0" },
-  "commands": ["probe", "inspect", "convert", "open", "formats", "stats", "outline", "search", "replace", "render", "capabilities", "version"],
+  "commands": ["probe", "inspect", "convert", "open", "formats", "stats", "totals", "outline", "search", "replace", "render", "capabilities", "version"],
   "modules": {
     "word": {},
     "excel": {},
@@ -143,6 +144,32 @@ at the first failure:
 
 The batch form prints its JSON report and then exits `1` when `failed` is
 greater than zero.
+
+### `totals`
+
+```json
+{
+  "counted": 2,
+  "failed": 0,
+  "families": {
+    "word": { "documents": 1, "blocks": 4, "paragraphs": 2, "headings": 1, "tables": 0, "words": 9, "characters": 42 },
+    "excel": { "documents": 0, "sheets": 0, "cells": 0 },
+    "presentation": { "documents": 1, "slides": 3 },
+    "pdf": { "documents": 0, "pages": 0 }
+  },
+  "results": [
+    { "source": "report.docx", "ok": true, "kind": "word", "totals": { "blocks": 4, "paragraphs": 2, "headings": 1, "tables": 0, "words": 9, "characters": 42 } },
+    { "source": "deck.pptx", "ok": true, "kind": "presentation", "totals": { "slides": 3 } }
+  ]
+}
+```
+
+Every number is the owning engine's own `stats` value, summed per family across
+the inputs; word totals add up blocks, paragraphs, headings (all levels),
+tables, words and characters, workbooks add up sheets and cells, presentations
+add up slides and PDFs add up pages. `families` always lists all four families,
+even the empty ones. A failing document appears only in `results` with its
+stable `code` and `error`, and the command exits `1` after printing the report.
 
 With more than one path, `inspect` reports every input in order and does not
 stop at the first failure. Successful entries keep the full per-family

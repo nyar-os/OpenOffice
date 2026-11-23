@@ -182,7 +182,7 @@ impl Office {
     pub fn capabilities(&self) -> Value {
         json!({
             "engine": { "package": "open-office", "version": VERSION },
-            "commands": ["probe", "inspect", "convert", "open", "formats", "stats", "outline", "search", "replace", "render", "capabilities", "version"],
+            "commands": ["probe", "inspect", "convert", "open", "formats", "stats", "totals", "outline", "search", "replace", "render", "capabilities", "version"],
             "modules": {
                 "word": open_word_document::capabilities(),
                 "excel": open_excel_workbook::capabilities(),
@@ -1155,6 +1155,76 @@ impl Office {
         Ok(json!({ "inspected": inspected, "failed": failed, "results": results }))
     }
 
+    /// Aggregates the statistics of many documents into one suite-level report.
+    ///
+    /// Every number still comes from the owning engine through [`Office::stats`];
+    /// this only sums them per family: word documents add up blocks, paragraphs,
+    /// headings, tables, words and characters, workbooks add up sheets and
+    /// cells, presentations add up slides and PDFs add up pages. A failing
+    /// document does not stop the batch: it is counted in `failed` and reported
+    /// with its stable `code` and `error`, exactly like the other batch verbs.
+    pub fn totals(&self, inputs: &[PathBuf]) -> Result<Value, OfficeError> {
+        if inputs.is_empty() {
+            return Err(OfficeError::usage("at least one document is required"));
+        }
+        let mut families = json!({
+            "word": { "documents": 0, "blocks": 0, "paragraphs": 0, "headings": 0, "tables": 0, "words": 0, "characters": 0 },
+            "excel": { "documents": 0, "sheets": 0, "cells": 0 },
+            "presentation": { "documents": 0, "slides": 0 },
+            "pdf": { "documents": 0, "pages": 0 },
+        });
+        let mut counted = 0;
+        let mut failed = 0;
+        let mut results = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            match self.stats(input) {
+                Ok(report) => {
+                    counted += 1;
+                    let kind = report.get("kind").and_then(Value::as_str).unwrap_or_default().to_owned();
+                    let stats = report.get("stats").cloned().unwrap_or(Value::Null);
+                    let totals = match kind.as_str() {
+                        "word" => json!({
+                            "blocks": number_of(&stats, "blocks"),
+                            "paragraphs": number_of(&stats, "paragraphs"),
+                            "headings": headings_total(&stats),
+                            "tables": number_of(&stats, "tables"),
+                            "words": number_of(&stats, "words"),
+                            "characters": number_of(&stats, "characters"),
+                        }),
+                        "excel" => json!({
+                            "sheets": stats.get("sheets").and_then(Value::as_array).map_or(0, |sheets| sheets.len() as u64),
+                            "cells": number_of(&stats, "cells"),
+                        }),
+                        "presentation" => json!({
+                            "slides": stats.get("slides").and_then(Value::as_array).map_or(0, |slides| slides.len() as u64),
+                        }),
+                        "pdf" => json!({ "pages": number_of(&stats, "pages") }),
+                        _ => Value::Null,
+                    };
+                    if let Some(family) = families.get_mut(&kind) {
+                        accumulate_totals(family, &totals);
+                    }
+                    results.push(json!({
+                        "source": input.display().to_string(),
+                        "ok": true,
+                        "kind": kind,
+                        "totals": totals,
+                    }));
+                }
+                Err(error) => {
+                    failed += 1;
+                    results.push(json!({
+                        "source": input.display().to_string(),
+                        "ok": false,
+                        "code": error.code(),
+                        "error": error.message(),
+                    }));
+                }
+            }
+        }
+        Ok(json!({ "counted": counted, "failed": failed, "families": families, "results": results }))
+    }
+
     /// Inspects many documents in input order.
     ///
     /// A failing document does not stop the batch: each entry carries `ok` and
@@ -1602,5 +1672,29 @@ fn excel_persist_format(extension: &str) -> Option<&'static str> {
 /// A routed extension that has no in-place replacement write-back route.
 fn unsupported_extension_route(extension: &str) -> OfficeError {
     OfficeError::usage(format!("`.{extension}` has no in-place replacement route in this build")).with_code("unsupported-target")
+}
+
+/// Reads one numeric field from an engine stats object, defaulting to zero.
+fn number_of(stats: &Value, key: &str) -> u64 {
+    stats.get(key).and_then(Value::as_u64).unwrap_or_default()
+}
+
+/// Sums the per-level heading counts a word document reports.
+fn headings_total(stats: &Value) -> u64 {
+    stats.get("headings").and_then(Value::as_object).map(|levels| levels.values().filter_map(Value::as_u64).sum()).unwrap_or_default()
+}
+
+/// Adds one document's family totals into the aggregate and counts the document.
+fn accumulate_totals(family: &mut Value, totals: &Value) {
+    let (Some(target), Some(source)) = (family.as_object_mut(), totals.as_object()) else {
+        return;
+    };
+    for (key, value) in source {
+        if let Some(current) = target.get(key).and_then(Value::as_u64) {
+            target.insert(key.clone(), json!(current + value.as_u64().unwrap_or_default()));
+        }
+    }
+    let documents = target.get("documents").and_then(Value::as_u64).unwrap_or_default() + 1;
+    target.insert("documents".to_string(), json!(documents));
 }
 
