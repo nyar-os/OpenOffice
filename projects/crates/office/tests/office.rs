@@ -702,6 +702,31 @@ fn compare_diffs_word_outlines_with_rename_pairing() {
 }
 
 #[test]
+fn compare_can_limit_itself_to_shallow_headings() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-compare-depth-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let left = dir.join("draft.md");
+    fs::write(&left, b"# Intro\n\n## Details\n\n### Deep\n").expect("write draft");
+    let right = dir.join("final.md");
+    fs::write(&right, b"# Intro\n\n## Summary\n\n### Deep\n").expect("write final");
+
+    let shallow = office.compare_at(&left, &right, false, Some(1)).expect("shallow compare");
+    assert_eq!(shallow["depth"], json!(1));
+    assert_eq!(shallow["left"]["sections"], json!(1));
+    assert_eq!(shallow["right"]["sections"], json!(1));
+    assert_eq!(shallow["identical"], json!(true), "the deeper rename is below the depth");
+
+    let deeper = office.compare_at(&left, &right, false, Some(2)).expect("deeper compare");
+    assert_eq!(deeper["left"]["sections"], json!(2));
+    assert_eq!(deeper["renamed"], json!([{ "from": "Details", "to": "Summary" }]));
+
+    let zero = office.compare_at(&left, &right, false, Some(0)).expect_err("depth zero");
+    assert_eq!(zero.code(), "invalid-depth");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn compare_diffs_presentation_slide_titles() {
     let office = Office::new();
     let dir = std::env::temp_dir().join(format!("open-office-compare-deck-{}", std::process::id()));

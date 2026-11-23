@@ -586,6 +586,22 @@ impl Office {
     /// pure case change is not reported as a rename. Added and removed titles
     /// keep their original spelling from the side they came from.
     pub fn compare_with(&self, left: &Path, right: &Path, ignore_case: bool) -> Result<Value, OfficeError> {
+        self.compare_at(left, right, ignore_case, None)
+    }
+
+    /// Compares two same-family outlines at an optional heading depth.
+    ///
+    /// `depth` keeps only word headings and PDF bookmarks at that level or
+    /// shallower on both sides before diffing, so a deeper change is invisible
+    /// to a shallow comparison. Workbooks and presentations reject a depth the
+    /// same way [`Office::outline`] does.
+    pub fn compare_at(
+        &self,
+        left: &Path,
+        right: &Path,
+        ignore_case: bool,
+        depth: Option<u8>,
+    ) -> Result<Value, OfficeError> {
         let left_kind = Kind::of_path(left)?;
         let right_kind = Kind::of_path(right)?;
         if left_kind != right_kind {
@@ -596,14 +612,15 @@ impl Office {
             ))
             .with_code("kind-mismatch"));
         }
-        let left_sections = self.outline_sections(left)?;
-        let right_sections = self.outline_sections(right)?;
+        let left_sections = self.outline_sections(left, depth)?;
+        let right_sections = self.outline_sections(right, depth)?;
         let (added, removed, renamed, moved) = diff_sections(&left_sections, &right_sections, ignore_case);
         Ok(json!({
             "kind": left_kind.label(),
             "left": { "path": left.display().to_string(), "sections": left_sections.len() },
             "right": { "path": right.display().to_string(), "sections": right_sections.len() },
             "ignoreCase": ignore_case,
+            "depth": depth,
             "identical": added.is_empty() && removed.is_empty() && renamed.is_empty() && moved.is_empty(),
             "added": added,
             "removed": removed,
@@ -613,8 +630,8 @@ impl Office {
     }
 
     /// Collects the outline titles of one document, in document order.
-    fn outline_sections(&self, path: &Path) -> Result<Vec<String>, OfficeError> {
-        let report = self.outline(path, false, None)?;
+    fn outline_sections(&self, path: &Path, depth: Option<u8>) -> Result<Vec<String>, OfficeError> {
+        let report = self.outline(path, false, depth)?;
         let mut titles = Vec::new();
         collect_titles(&report["outline"], &mut titles);
         Ok(titles)
