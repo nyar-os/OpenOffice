@@ -1081,6 +1081,28 @@ fn render_refuses_families_without_a_renderer() {
 }
 
 #[test]
+fn compare_reports_sections_that_only_moved() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-compare-moved-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let left = dir.join("left.md");
+    fs::write(&left, b"# Intro\n\n## Alpha\n\n## Beta\n").expect("write left");
+    let right = dir.join("right.md");
+    fs::write(&right, b"# Alpha\n\n## Beta\n\n## Intro\n").expect("write right");
+
+    let report = office.compare(&left, &right).expect("compare reordered outlines");
+    assert_eq!(report["identical"], json!(false));
+    assert_eq!(report["added"], json!([]));
+    assert_eq!(report["removed"], json!([]));
+    assert_eq!(report["renamed"], json!([]));
+    assert_eq!(report["moved"], json!([{ "title": "Intro", "from": 0, "to": 2 }]));
+
+    let same = office.compare(&left, &left).expect("compare with itself");
+    assert_eq!(same["moved"], json!([]));
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn replace_dry_run_counts_matches_without_writing_any_family() {
     let office = Office::new();
     let dir = std::env::temp_dir().join(format!("open-office-replace-dry-{}", std::process::id()));

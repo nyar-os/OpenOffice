@@ -8,6 +8,7 @@
 //! The command line in `main.rs` is a thin parser over [`Office`].
 
 use std::{
+    collections::{HashMap, HashSet},
     fmt, fs,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
@@ -515,16 +516,17 @@ impl Office {
         }
         let left_sections = self.outline_sections(left)?;
         let right_sections = self.outline_sections(right)?;
-        let (added, removed, renamed) = diff_sections(&left_sections, &right_sections, ignore_case);
+        let (added, removed, renamed, moved) = diff_sections(&left_sections, &right_sections, ignore_case);
         Ok(json!({
             "kind": left_kind.label(),
             "left": { "path": left.display().to_string(), "sections": left_sections.len() },
             "right": { "path": right.display().to_string(), "sections": right_sections.len() },
             "ignoreCase": ignore_case,
-            "identical": added.is_empty() && removed.is_empty() && renamed.is_empty(),
+            "identical": added.is_empty() && removed.is_empty() && renamed.is_empty() && moved.is_empty(),
             "added": added,
             "removed": removed,
             "renamed": renamed,
+            "moved": moved,
         }))
     }
 
@@ -1839,10 +1841,16 @@ fn collect_titles(value: &Value, titles: &mut Vec<String>) {
 
 /// Aligns two ordered section lists with a longest-common-subsequence walk.
 ///
-/// Inside each maximal change block the removed titles are paired positionally
-/// with the added titles and reported as renames; unpaired entries stay in the
-/// `added` and `removed` lists.
-fn diff_sections(left: &[String], right: &[String], ignore_case: bool) -> (Vec<String>, Vec<String>, Vec<Value>) {
+/// A title that appears on both sides outside the common subsequence kept its
+/// content but changed position, so it is reported under `moved` instead of
+/// being counted as an add and a remove. Inside each remaining change block the
+/// removed titles are paired positionally with the added titles and reported as
+/// renames; unpaired entries stay in the `added` and `removed` lists.
+fn diff_sections(
+    left: &[String],
+    right: &[String],
+    ignore_case: bool,
+) -> (Vec<String>, Vec<String>, Vec<Value>, Vec<Value>) {
     let same = |left: &str, right: &str| {
         if ignore_case {
             left.to_lowercase() == right.to_lowercase()
@@ -1851,6 +1859,7 @@ fn diff_sections(left: &[String], right: &[String], ignore_case: bool) -> (Vec<S
             left == right
         }
     };
+    let key = |value: &str| if ignore_case { value.to_lowercase() } else { value.to_owned() };
     let (n, m) = (left.len(), right.len());
     let mut table = vec![vec![0u32; m + 1]; n + 1];
     for i in (0..n).rev() {
@@ -1867,7 +1876,7 @@ fn diff_sections(left: &[String], right: &[String], ignore_case: bool) -> (Vec<S
     let (mut i, mut j) = (0usize, 0usize);
     while i < n && j < m {
         if same(&left[i], &right[j]) {
-            script.push(Edit::Equal);
+            script.push(Edit::Equal(i, j));
             i += 1;
             j += 1;
         }
@@ -1883,22 +1892,59 @@ fn diff_sections(left: &[String], right: &[String], ignore_case: bool) -> (Vec<S
     script.extend((i..n).map(Edit::Removed));
     script.extend((j..m).map(Edit::Added));
 
+    // Titles outside the common subsequence that still exist on both sides only
+    // changed position, so they pair up here before renames are considered.
+    let mut matched_left = vec![false; n];
+    let mut matched_right = vec![false; m];
+    for step in &script {
+        if let Edit::Equal(left_at, right_at) = step {
+            matched_left[*left_at] = true;
+            matched_right[*right_at] = true;
+        }
+    }
+    let mut right_by_key: HashMap<String, Vec<usize>> = HashMap::new();
+    for (index, title) in right.iter().enumerate().filter(|(index, _)| !matched_right[*index]) {
+        right_by_key.entry(key(title)).or_default().push(index);
+    }
+    let mut moved = Vec::new();
+    for (index, title) in left.iter().enumerate().filter(|(index, _)| !matched_left[*index]) {
+        let Some(candidates) = right_by_key.get_mut(&key(title))
+        else {
+            continue;
+        };
+        let Some(position) = candidates.first().copied()
+        else {
+            continue;
+        };
+        candidates.remove(0);
+        moved.push(json!({ "title": title, "from": index, "to": position }));
+    }
+    let moved_titles = moved.iter().filter_map(|entry| entry["title"].as_str()).map(key).collect::<HashSet<_>>();
+
     let mut added = Vec::new();
     let mut removed = Vec::new();
     let mut renamed = Vec::new();
     let mut index = 0;
     while index < script.len() {
-        if matches!(script[index], Edit::Equal) {
+        if matches!(script[index], Edit::Equal(..)) {
             index += 1;
             continue;
         }
         let mut block_removed = Vec::new();
         let mut block_added = Vec::new();
-        while index < script.len() && !matches!(script[index], Edit::Equal) {
+        while index < script.len() && !matches!(script[index], Edit::Equal(..)) {
             match script[index] {
-                Edit::Removed(at) => block_removed.push(left[at].clone()),
-                Edit::Added(at) => block_added.push(right[at].clone()),
-                Edit::Equal => {}
+                Edit::Removed(at) => {
+                    if !moved_titles.contains(&key(&left[at])) {
+                        block_removed.push(left[at].clone());
+                    }
+                }
+                Edit::Added(at) => {
+                    if !moved_titles.contains(&key(&right[at])) {
+                        block_added.push(right[at].clone());
+                    }
+                }
+                Edit::Equal(..) => {}
             }
             index += 1;
         }
@@ -1909,12 +1955,12 @@ fn diff_sections(left: &[String], right: &[String], ignore_case: bool) -> (Vec<S
         removed.extend(block_removed.into_iter().skip(paired));
         added.extend(block_added.into_iter().skip(paired));
     }
-    (added, removed, renamed)
+    (added, removed, renamed, moved)
 }
 
 /// One step of an outline alignment between two documents.
 enum Edit {
-    Equal,
+    Equal(usize, usize),
     Removed(usize),
     Added(usize),
 }
