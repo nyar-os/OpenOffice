@@ -431,7 +431,7 @@ A failure raised inside one of the four engines is forwarded with that engine's 
 | `container-mismatch` | The bytes contradict the extension route, for example a PDF renamed to `.xlsx` or plain text renamed to `.pdf`. |
 | `unsupported-target` | `--format` is not one of the export targets the source family wires. |
 | `target-exists` | The output exists and `--overwrite` was not passed. |
-| `unsupported-option` | `--points` or `--notes` for a non-presentation, `--points` with `--notes`, `--pages` for a non-PDF, or `--checks` on a PDF. |
+| `unsupported-option` | `--points` or `--notes` for a non-presentation, `--points` with `--notes`, `--pages` for a non-PDF, `--checks` on a PDF, or `--limit` on a presentation `replace`. |
 | `invalid-query` | `--text` or `--find` was empty. |
 | `kind-mismatch` | `compare` was given two documents from different families. |
 | `invalid-pages` | A page range is empty, malformed, zero, reversed, duplicated or beyond the page count. |
@@ -453,6 +453,21 @@ Routing is by lowercased extension:
 `.project`, `.oppt` and `.opresent` open as native presentations; every other presentation extension is imported as PresentationML and reports import losses. Files without an extension fail with `missing-extension`; any other extension fails with `unsupported-extension`.
 
 After routing, `inspect`, `stats`, `totals`, `metadata`, `outline`, `search`, `render` and `convert` read the whole file and cross-check the detected container against the route. A mismatch is refused with the probe evidence. When the bytes do not resolve a family, the extension route stands. `probe` performs no routing and never opens the document.
+
+## Reproducible builds
+
+The crate resolves its engines as path dependencies on the four sibling working copies and pulls `document-formats` from Boost as a rev-pinned git dependency. The compatibility combination this reference was verified against (2026-11-24, rebuild from an empty target directory):
+
+| Repo | Resolved as | Revision |
+|------|-------------|----------|
+| `OpenWord` | path `../../../../OpenWord/projects/crates/model` | `9813f6b` |
+| `OpenExcel` | path `../../../../OpenExcel/projects/crates/model` | `a4c7870` |
+| `OpenPPT` | path `../../../../OpenPPT/projects/crates/deck` | `27dea94` |
+| `OpenPDF` | path `../../../../OpenPDF/projects/crates/pdf` | `7107317` |
+| `rust-boost` (`document-formats`, this crate's direct dependency) | git `rev=ad76d3060dc8c0e219ba1016f88bf5ab905d48d9`, locked in `Cargo.lock` | `ad76d30` |
+| `rust-boost` (`document-pdf` and `media-codec`, pulled by `OpenPDF`'s own manifest) | git `rev=d84299a951f16961ea24f51be711d0eef97ce491`, outside this crate's control and recorded as resolved | `d84299a` |
+
+A clean rebuild compiles the four engine crates from the checkouts beside this repository and fetches both Boost closures at their pinned revisions, so the recorded revisions are the actual resolution sources, not a lockfile artifact. The two Boost revisions coexist as distinct package sources; upgrading `ad76d30` here does not move `OpenPDF`'s pin. CI clones the sibling repositories at the tip of `dev`; once the revisions above are pushed, pin those clones to the same commits so CI and local builds resolve identically.
 
 ## Guardrails
 
