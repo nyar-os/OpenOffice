@@ -1100,6 +1100,55 @@ fn replace_many_reports_each_input_in_order() {
 }
 
 #[test]
+fn replace_many_survives_a_mid_batch_failure_without_leaked_artifacts() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-replace-mid-failure-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("temp dir");
+    let first = dir.join("a.md");
+    fs::write(&first, b"# Alpha\n").expect("write first");
+    let third = dir.join("c.md");
+    fs::write(&third, b"Alpha again.\n").expect("write third");
+
+    let inputs = vec![first.clone(), dir.join("missing.md"), third.clone()];
+    let report = office.replace_many(&inputs, "Alpha", "Omega", &ReplaceOptions::default()).expect("replace batch");
+    assert_eq!(report["updated"], json!(2));
+    assert_eq!(report["failed"], json!(1));
+    let results = report["results"].as_array().expect("results array");
+    assert_eq!(results.len(), 3, "one entry per input, in input order");
+    assert_eq!(results[0]["source"], json!(first.display().to_string()));
+    assert_eq!(results[0]["ok"], json!(true));
+    assert_eq!(results[0]["replaced"], json!(1), "file 1 keeps its result after file 2 failed");
+    assert!(results[0]["revision"].is_number());
+    assert_eq!(results[1]["ok"], json!(false));
+    assert_eq!(results[1]["code"], json!("not-found"));
+    assert!(results[1].get("params").is_some(), "the batch envelope carries the params field");
+    assert!(results[1]["error"].is_string(), "the failure message stays with the stable code");
+    assert_eq!(results[2]["ok"], json!(true), "the batch continues after the failure");
+    assert_eq!(results[2]["replaced"], json!(1));
+    assert!(fs::read_to_string(&first).expect("read first").contains("Omega"));
+    assert!(fs::read_to_string(&third).expect("read third").contains("Omega"));
+
+    // The replace path holds its engine handle in a Drop guard, so a failing
+    // document never leaves a live session behind: the word engine can still
+    // open the changed document, and a closed handle stops resolving.
+    let opened = open_word_document::open(&first).expect("reopen after the failed batch");
+    let handle = handle_of(&opened).expect("handle");
+    assert!(open_word_document::summary(handle).is_ok(), "the reopened handle is live");
+    open_word_document::close(handle).expect("close");
+    assert_eq!(open_word_document::summary(handle).expect_err("closed handles stop resolving").code(), "document/not-found");
+
+    // No leaked temp or lock artifacts: only the two changed documents remain.
+    let mut names: Vec<String> = fs::read_dir(&dir)
+        .expect("read dir")
+        .map(|entry| entry.expect("entry").file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(names, vec!["a.md".to_owned(), "c.md".to_owned()]);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn render_writes_a_workbook_sheet_and_protects_the_target() {
     let dir = std::env::temp_dir().join(format!("open-office-render-excel-{}", std::process::id()));
     fs::create_dir_all(&dir).expect("temp dir");
