@@ -67,7 +67,7 @@ Every command returns an object. The shared keys are `kind` (one of `word`, `exc
 - The extension is a hint only. `probe` accepts a path with no extension and a path whose extension is unknown.
 
 With more than one path, `probe` returns
-`{ probed, failed, results: [{ source, ok, format, container, confidence, candidates, evidence? } | { source, ok: false, code, error }] }`
+`{ probed, failed, results: [{ source, ok, format, container, confidence, candidates, evidence? } | { source, ok: false, code, params, error }] }`
 in input order and exits non-zero when any file failed. `evidence` appears only
 when the detector quoted some.
 
@@ -139,7 +139,7 @@ The envelope differs per family because each engine reports different facts:
 
 - The document is opened, never converted. `summary` is the owning engine's own summary object: the document summary for word, the workbook summary for Excel, the deck summary for presentations; for PDFs it is the small inspect projection `{ version, pages, encrypted }` and `revision` is `null`.
 - `losses` carries the import losses the word, workbook or deck engine reported; `warnings` carries the PDF engine's structure warnings. Both are arrays and may be empty.
-- With more than one path, `validate` returns `{ validated, failed, results: [{ source, ok, kind, container, revision, summary, losses, warnings } | { source, ok: false, code, error }] }` in input order and exits non-zero when any file failed.
+- With more than one path, `validate` returns `{ validated, failed, results: [{ source, ok, kind, container, revision, summary, losses, warnings } | { source, ok: false, code, params, error }] }` in input order and exits non-zero when any file failed.
 
 ### `extract`
 
@@ -157,7 +157,7 @@ The envelope differs per family because each engine reports different facts:
 - `kind` names the family that handled the document; `format` is the text form written: `txt` for word, `csv` for the workbook's primary sheet grid, `text` for the deck projection and `markdown` for PDFs.
 - `losses` carries what the engine could not keep (skipped sheets, dropped deck content, unextractable PDF parts) and may be empty.
 - The target is protected: an existing `out` fails with `target-exists` unless `--overwrite`, and a container that contradicts the extension fails with `container-mismatch` before anything is written.
-- With several inputs and `--out-dir`, `extract` returns `{ extracted, failed, results: [{ source, target, ok, kind, format, bytes } | { source, target, ok: false, code, error }] }` in input order and exits non-zero when any file failed.
+- With several inputs and `--out-dir`, `extract` returns `{ extracted, failed, results: [{ source, target, ok, kind, format, bytes } | { source, target, ok: false, code, params, error }] }` in input order and exits non-zero when any file failed.
 
 ### `stats`
 
@@ -211,7 +211,7 @@ the inputs; word totals add up blocks, paragraphs, headings (all levels),
 tables, words and characters, workbooks add up sheets and cells, presentations
 add up slides and PDFs add up pages. `families` always lists all four families,
 even the empty ones. A failing document appears only in `results` with its
-stable `code` and `error`, and the command exits `1` after printing the report.
+stable `code`, typed `params` (`null` when the code carries none) and `error`, and the command exits `1` after printing the report.
 
 ### `metadata`
 
@@ -233,7 +233,7 @@ With several paths, `metadata` switches to a best-effort batch report:
 ```
 
 Each input is attempted in order; a failing document contributes only its
-stable `code` and `error`, and the command exits `1` after printing the report.
+stable `code`, typed `params` (`null` when the code carries none) and `error`, and the command exits `1` after printing the report.
 
 With more than one path, `inspect` reports every input in order and does not
 stop at the first failure. Successful entries keep the full per-family
@@ -320,7 +320,7 @@ For Word hits, `path` is the enclosing section address or `null`. Offsets are ch
 
 With more than one path, `search` applies the same query and limit to every document and returns
 
-`{ query, searched, failed, results: [{ source, ok, kind, search } | { source, ok: false, code, error }] }`
+`{ query, searched, failed, results: [{ source, ok, kind, search } | { source, ok: false, code, params, error }] }`
 
 where `search` is the single-document envelope above. `limit` applies per document, not to the batch.
 
@@ -343,7 +343,7 @@ The request reaches the owning engine's own find-and-replace: Word covers sectio
 
 With more than one path, `replace` returns
 
-`{ find, replace, dryRun, updated, failed, results: [{ source, ok, kind, replaced, revision } | { source, ok: false, code, error }] }`
+`{ find, replace, dryRun, updated, failed, results: [{ source, ok, kind, replaced, revision } | { source, ok: false, code, params, error }] }`
 
 in input order and exits non-zero when any document failed.
 
@@ -414,11 +414,13 @@ With more than one path, `render` writes into `<out-dir>/<source stem>/` and ret
 }
 ```
 
-`results` follows input order. A failing document does not stop the batch. On success the entry's `report` is the same engine report the single-input form returns. On failure the entry carries `code` and `error`.
+`results` follows input order. A failing document does not stop the batch. On success the entry's `report` is the same engine report the single-input form returns. On failure the entry carries `code`, `params` and `error`.
 
 ## Stable error codes
 
-Codes are exposed to library callers and in batch `results[].code`. The CLI itself prints `open-office: <message>` and does not print the code, so read the JSON report when a code is needed.
+Codes are exposed to library callers (`OfficeError::code` and `OfficeError::params`) and in batch `results[].code`. The CLI prints `open-office: <code>: <message>` on stderr, and every batch failure entry carries `params` with the typed parameters of the code, `null` when there are none.
+
+A failure raised inside one of the four engines is forwarded with that engine's own stable code and parameters, exactly as the individual product would report them (`io/read`, `session/argument-invalid`, ...). The suite never re-labels an engine failure with a generic `runtime`, `conversion-failed` or `replace-failed` code. The codes below belong to the suite's own routing and guardrail checks.
 
 | Code | Cause |
 |------|-------|
@@ -433,8 +435,6 @@ Codes are exposed to library callers and in batch `results[].code`. The CLI itse
 | `invalid-query` | `--text` or `--find` was empty. |
 | `kind-mismatch` | `compare` was given two documents from different families. |
 | `invalid-pages` | A page range is empty, malformed, zero, reversed, duplicated or beyond the page count. |
-| `conversion-failed` | The owning engine failed while exporting or extracting. |
-| `replace-failed` | The owning engine failed while replacing text or saving a replaced document back in place. |
 | `output-unwritable` | The output directory cannot be created, or the PDF text target cannot be written. |
 | `usage` | Generic usage failure with no more specific code. |
 | `runtime` | Generic runtime failure with no more specific code. |

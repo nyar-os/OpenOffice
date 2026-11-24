@@ -1642,3 +1642,35 @@ fn extract_many_writes_one_text_file_per_document() {
     assert!(office.extract_many(&inputs, &PathBuf::from(""), false).expect_err("empty out dir").is_usage());
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn routed_engine_failures_keep_the_engine_stable_code_and_params() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-engine-error-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+
+    // An empty ZIP package routes to the Word engine and fails inside it,
+    // so both the single-file error and the batch entry must carry the
+    // engine's own stable code and typed parameters, never `runtime`.
+    let empty_package = dir.join("empty.docx");
+    fs::write(&empty_package, b"PK\x05\x06\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00")
+        .expect("write empty zip");
+    let engine_failure = open_word_document::open(&empty_package).expect_err("the engine rejects the empty package");
+    let expected_params = (engine_failure.params() != &Value::Null).then(|| engine_failure.params().clone());
+
+    let single = office.inspect(&empty_package, None).expect_err("routing keeps the engine failure");
+    assert_eq!(single.code(), engine_failure.code());
+    assert_ne!(single.code(), "runtime");
+    assert_eq!(single.message(), engine_failure.message());
+    assert_eq!(single.params(), expected_params.as_ref());
+
+    let report = office
+        .replace_many(std::slice::from_ref(&empty_package), "Alpha", "Omega", &ReplaceOptions::default())
+        .expect("replace batch");
+    let results = report["results"].as_array().expect("results array");
+    assert_eq!(results[0]["ok"], json!(false));
+    assert_eq!(results[0]["code"], json!(engine_failure.code()));
+    assert_eq!(results[0]["params"], engine_failure.params().clone());
+
+    let _ = fs::remove_dir_all(&dir);
+}

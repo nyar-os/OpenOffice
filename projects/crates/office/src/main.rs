@@ -16,12 +16,12 @@ fn main() -> ExitCode {
     match run(&arguments) {
         Ok(()) => ExitCode::SUCCESS,
         Err(failure) if failure.is_usage() => {
-            eprintln!("open-office: {}\n", failure.message());
+            eprintln!("open-office: {}: {}\n", failure.code(), failure.message());
             usage();
             ExitCode::from(2)
         }
         Err(failure) => {
-            eprintln!("open-office: {}", failure.message());
+            eprintln!("open-office: {}: {}", failure.code(), failure.message());
             ExitCode::from(1)
         }
     }

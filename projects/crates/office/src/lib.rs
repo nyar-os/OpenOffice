@@ -80,27 +80,39 @@ impl Kind {
 }
 
 /// Library failure with a stable distinction between usage and runtime errors.
+///
+/// A failure raised inside one of the four engines is forwarded with the
+/// engine's own stable code and typed parameters, so a routed command reports
+/// the same code the individual product would. Suite-level guardrails keep
+/// their own codes such as `not-found` or `unsupported-target`.
 #[derive(Debug)]
 pub struct OfficeError {
     message: String,
     usage: bool,
-    code: &'static str,
+    code: String,
+    params: Option<Value>,
 }
 
 impl OfficeError {
     /// A caller mistake: unknown option, missing argument or unsupported target.
     pub fn usage(message: impl Into<String>) -> Self {
-        Self { message: message.into(), usage: true, code: "usage" }
+        Self { message: message.into(), usage: true, code: "usage".to_owned(), params: None }
     }
 
     /// A failure while reading, converting or writing a document.
     pub fn runtime(message: impl Into<String>) -> Self {
-        Self { message: message.into(), usage: false, code: "runtime" }
+        Self { message: message.into(), usage: false, code: "runtime".to_owned(), params: None }
     }
 
     /// Refines the failure with a stable machine-readable code.
-    pub fn with_code(mut self, code: &'static str) -> Self {
-        self.code = code;
+    pub fn with_code(mut self, code: impl Into<String>) -> Self {
+        self.code = code.into();
+        self
+    }
+
+    /// Attaches the typed parameters that belong to the stable code.
+    pub fn with_params(mut self, params: Value) -> Self {
+        self.params = (!params.is_null()).then_some(params);
         self
     }
 
@@ -112,15 +124,90 @@ impl OfficeError {
     /// Stable machine-readable code, safe for callers to branch on.
     ///
     /// Unrefined failures report `usage` or `runtime`; the concrete cause is
-    /// named by sites such as `not-found`, `unsupported-target` or
-    /// `conversion-failed`.
-    pub fn code(&self) -> &'static str {
-        self.code
+    /// named by sites such as `not-found`, `unsupported-target` or the engine
+    /// codes (`io/read`, `session/argument-invalid`, ...) that forwarded
+    /// engine failures carry unchanged.
+    pub fn code(&self) -> &str {
+        &self.code
+    }
+
+    /// Typed per-code parameters, or `None` when the code carries none.
+    pub fn params(&self) -> Option<&Value> {
+        self.params.as_ref()
     }
 
     /// Whether the failure is a usage error (exit code 2) or a runtime error (1).
     pub fn is_usage(&self) -> bool {
         self.usage
+    }
+}
+
+/// The stable machine-readable identity an engine failure carries into suite
+/// reports, so routing never hides the owning engine's code or parameters.
+trait EngineFailure {
+    fn stable_code(&self) -> &str;
+    fn stable_message(&self) -> String;
+    fn stable_params(&self) -> Option<Value>;
+}
+
+impl EngineFailure for open_word_document::ServiceError {
+    fn stable_code(&self) -> &str {
+        self.code()
+    }
+
+    fn stable_message(&self) -> String {
+        self.message().to_owned()
+    }
+
+    fn stable_params(&self) -> Option<Value> {
+        let params = self.params();
+        (!params.is_null()).then(|| params.clone())
+    }
+}
+
+impl EngineFailure for open_excel_workbook::ServiceError {
+    fn stable_code(&self) -> &str {
+        self.code()
+    }
+
+    fn stable_message(&self) -> String {
+        self.message().to_owned()
+    }
+
+    fn stable_params(&self) -> Option<Value> {
+        let params = self.params();
+        (!params.is_null()).then(|| params.clone())
+    }
+}
+
+impl EngineFailure for open_ppt_deck::ServiceError {
+    fn stable_code(&self) -> &str {
+        self.code()
+    }
+
+    fn stable_message(&self) -> String {
+        self.message().to_owned()
+    }
+
+    fn stable_params(&self) -> Option<Value> {
+        let params = self.params();
+        (!params.is_null()).then(|| params.clone())
+    }
+}
+
+impl EngineFailure for open_pdf_core::ServiceError {
+    fn stable_code(&self) -> &str {
+        self.code()
+    }
+
+    fn stable_message(&self) -> String {
+        self.message().to_owned()
+    }
+
+    /// The PDF engine carries no typed parameters yet, so routing forwards
+    /// only its stable code and leaves `params` absent.
+    fn stable_params(&self) -> Option<Value> {
+        None
     }
 }
 
@@ -326,6 +413,7 @@ impl Office {
                         "source": input.display().to_string(),
                         "ok": false,
                         "code": error.code(),
+                        "params": error.params(),
                         "error": error.message(),
                     }));
                 }
@@ -340,18 +428,18 @@ impl Office {
         verify_container(path, kind)?;
         let stats = match kind {
             Kind::Word => {
-                let opened = open_word_document::open(path).map_err(runtime)?;
+                let opened = open_word_document::open(path).map_err(engine)?;
                 let handle = handle_of(&opened)?;
                 let outcome = open_word_document::stats(handle);
                 let _ = open_word_document::close(handle);
-                outcome.map_err(runtime)?
+                outcome.map_err(engine)?
             }
             Kind::Excel => {
-                let opened = open_excel_workbook::open(path).map_err(runtime)?;
+                let opened = open_excel_workbook::open(path).map_err(engine)?;
                 let handle = handle_of(&opened)?;
                 let outcome = open_excel_workbook::summary(handle);
                 let _ = open_excel_workbook::close(handle);
-                outcome.map_err(runtime)?
+                outcome.map_err(engine)?
             }
             Kind::Presentation => {
                 let loaded = load_deck(path)?;
@@ -362,7 +450,7 @@ impl Office {
                 stats
             }
             Kind::Pdf => {
-                let report = open_pdf_core::inspect(path).map_err(runtime)?;
+                let report = open_pdf_core::inspect(path).map_err(engine)?;
                 json!({
                     "pages": report.pages,
                     "version": report.version,
@@ -389,19 +477,19 @@ impl Office {
         verify_container(path, kind)?;
         let metadata = match kind {
             Kind::Word => {
-                let opened = open_word_document::open(path).map_err(runtime)?;
+                let opened = open_word_document::open(path).map_err(engine)?;
                 let handle = handle_of(&opened)?;
                 let outcome = open_word_document::summary(handle);
                 let _ = open_word_document::close(handle);
-                let summary = outcome.map_err(runtime)?;
+                let summary = outcome.map_err(engine)?;
                 json!({ "title": summary.get("title").cloned().unwrap_or(Value::Null) })
             }
             Kind::Excel => {
-                let opened = open_excel_workbook::open(path).map_err(runtime)?;
+                let opened = open_excel_workbook::open(path).map_err(engine)?;
                 let handle = handle_of(&opened)?;
                 let outcome = open_excel_workbook::summary(handle);
                 let _ = open_excel_workbook::close(handle);
-                let summary = outcome.map_err(runtime)?;
+                let summary = outcome.map_err(engine)?;
                 json!({ "title": summary.get("title").cloned().unwrap_or(Value::Null) })
             }
             Kind::Presentation => {
@@ -410,8 +498,8 @@ impl Office {
                 json!({ "title": summary.get("title").cloned().unwrap_or(Value::Null) })
             }
             Kind::Pdf => {
-                let report = open_pdf_core::inspect(path).map_err(runtime)?;
-                serde_json::to_value(&report.metadata).map_err(runtime)?
+                let report = open_pdf_core::inspect(path).map_err(engine)?;
+                serde_json::to_value(&report.metadata).map_err(|error| OfficeError::runtime(error.to_string()))?
             }
         };
         Ok(json!({
@@ -451,6 +539,7 @@ impl Office {
                         "source": path.display().to_string(),
                         "ok": false,
                         "code": error.code(),
+                        "params": error.params(),
                         "error": error.message(),
                     }));
                 }
@@ -482,11 +571,11 @@ impl Office {
         verify_container(path, kind)?;
         let outline = match kind {
             Kind::Word => {
-                let opened = open_word_document::open(path).map_err(runtime)?;
+                let opened = open_word_document::open(path).map_err(engine)?;
                 let handle = handle_of(&opened)?;
                 let outcome = open_word_document::outline(handle);
                 let _ = open_word_document::close(handle);
-                let mut outline = outcome.map_err(runtime)?;
+                let mut outline = outcome.map_err(engine)?;
                 if let Some(depth) = depth
                     && let Some(items) = outline.get_mut("items")
                 {
@@ -495,11 +584,11 @@ impl Office {
                 outline
             }
             Kind::Excel => {
-                let opened = open_excel_workbook::open(path).map_err(runtime)?;
+                let opened = open_excel_workbook::open(path).map_err(engine)?;
                 let handle = handle_of(&opened)?;
                 let summary = open_excel_workbook::summary(handle);
                 let _ = open_excel_workbook::close(handle);
-                let summary = summary.map_err(runtime)?;
+                let summary = summary.map_err(engine)?;
                 json!({
                     "revision": summary.get("revision").cloned().unwrap_or(Value::Null),
                     "sheets": summary.get("sheets").cloned().unwrap_or_else(|| json!([])),
@@ -507,10 +596,10 @@ impl Office {
             }
             Kind::Presentation => {
                 let loaded = load_deck(path)?;
-                open_ppt_deck::outline::outline(&loaded.deck, &json!({ "points": points })).map_err(runtime)?
+                open_ppt_deck::outline::outline(&loaded.deck, &json!({ "points": points })).map_err(engine)?
             }
             Kind::Pdf => {
-                let report = open_pdf_core::inspect(path).map_err(runtime)?;
+                let report = open_pdf_core::inspect(path).map_err(engine)?;
                 let mut bookmarks = serde_json::to_value(&report.bookmarks)
                     .map_err(|error| OfficeError::runtime(error.to_string()))?;
                 if let Some(depth) = depth
@@ -558,6 +647,7 @@ impl Office {
                         "source": input.display().to_string(),
                         "ok": false,
                         "code": error.code(),
+                        "params": error.params(),
                         "error": error.message(),
                     }));
                 }
@@ -739,21 +829,21 @@ impl Office {
         let limit = limit.unwrap_or(100).clamp(1, 500) as usize;
         let (hits, truncated, notes) = match kind {
             Kind::Word => {
-                let opened = open_word_document::open(path).map_err(runtime)?;
+                let opened = open_word_document::open(path).map_err(engine)?;
                 let handle = handle_of(&opened)?;
                 let outcome = open_word_document::find(handle, query, Some(limit as u32));
                 let _ = open_word_document::close(handle);
-                let report = outcome.map_err(runtime)?;
+                let report = outcome.map_err(engine)?;
                 let hits = report.as_array().cloned().unwrap_or_default();
                 let truncated = hits.len() >= limit;
                 (hits, truncated, Vec::new())
             }
             Kind::Excel => {
-                let opened = open_excel_workbook::open(path).map_err(runtime)?;
+                let opened = open_excel_workbook::open(path).map_err(engine)?;
                 let handle = handle_of(&opened)?;
                 let outcome = open_excel_workbook::find(handle, &json!({ "query": query, "options": { "matchCase": true } }));
                 let _ = open_excel_workbook::close(handle);
-                let report = outcome.map_err(runtime)?;
+                let report = outcome.map_err(engine)?;
                 let mut hits = report.get("hits").and_then(Value::as_array).cloned().unwrap_or_default();
                 let capped = report.get("truncated").and_then(Value::as_bool).unwrap_or(false);
                 let truncated = capped || hits.len() > limit;
@@ -806,6 +896,7 @@ impl Office {
                         "source": input.display().to_string(),
                         "ok": false,
                         "code": error.code(),
+                        "params": error.params(),
                         "error": error.message(),
                     }));
                 }
@@ -836,13 +927,13 @@ impl Office {
         let match_case = !options.ignore_case;
         let (replaced, revision, saved) = match kind {
             Kind::Word => {
-                let opened = open_word_document::open(path).map_err(runtime)?;
+                let opened = open_word_document::open(path).map_err(engine)?;
                 let handle = handle_of(&opened)?;
                 let mut request = json!({ "find": find, "replace": with, "caseSensitive": match_case });
                 if let Some(limit) = options.limit {
                     request["limit"] = json!(limit);
                 }
-                let outcome = open_word_document::replace(handle, &request).map_err(replace_failed)?;
+                let outcome = open_word_document::replace(handle, &request).map_err(engine)?;
                 let replaced = outcome.get("replaced").and_then(Value::as_u64).unwrap_or_default();
                 let revision = outcome.get("revision").cloned().unwrap_or(Value::Null);
                 let saved = if replaced == 0 || options.dry_run {
@@ -850,11 +941,11 @@ impl Office {
                 }
                 else {
                     let (format, report) = if extension == "oword" {
-                        ("oword".to_owned(), open_word_document::save(handle, path, true).map_err(replace_failed)?)
+                        ("oword".to_owned(), open_word_document::save(handle, path, true).map_err(engine)?)
                     }
                     else {
                         let format = word_persist_format(&extension).ok_or_else(|| unsupported_extension_route(&extension))?;
-                        (format.to_owned(), open_word_document::export(handle, format, path, true).map_err(replace_failed)?)
+                        (format.to_owned(), open_word_document::export(handle, format, path, true).map_err(engine)?)
                     };
                     json!({ "format": format, "report": report })
                 };
@@ -862,9 +953,9 @@ impl Office {
                 (replaced, revision, saved)
             }
             Kind::Excel => {
-                let opened = open_excel_workbook::open(path).map_err(runtime)?;
+                let opened = open_excel_workbook::open(path).map_err(engine)?;
                 let handle = handle_of(&opened)?;
-                let summary = open_excel_workbook::summary(handle).map_err(replace_failed)?;
+                let summary = open_excel_workbook::summary(handle).map_err(engine)?;
                 let revision = summary.get("revision").cloned().unwrap_or(Value::Null);
                 let mut operations = Vec::new();
                 for sheet in summary.get("sheets").and_then(Value::as_array).cloned().unwrap_or_default() {
@@ -888,7 +979,7 @@ impl Office {
                 }
                 else {
                     let outcome =
-                        open_excel_workbook::edit(handle, &json!({ "operations": operations })).map_err(replace_failed)?;
+                        open_excel_workbook::edit(handle, &json!({ "operations": operations })).map_err(engine)?;
                     let replaced = outcome.get("replacements").and_then(Value::as_u64).unwrap_or_default();
                     let revision = outcome.get("revision").cloned().unwrap_or(revision);
                     let saved = if replaced == 0 || options.dry_run {
@@ -896,12 +987,12 @@ impl Office {
                     }
                     else {
                         let (format, report) = if extension == "oexcel" {
-                            ("oexcel".to_owned(), open_excel_workbook::save(handle, path, true).map_err(replace_failed)?)
+                            ("oexcel".to_owned(), open_excel_workbook::save(handle, path, true).map_err(engine)?)
                         }
                         else {
                             let format =
                                 excel_persist_format(&extension).ok_or_else(|| unsupported_extension_route(&extension))?;
-                            (format.to_owned(), open_excel_workbook::export(handle, format, path, true).map_err(replace_failed)?)
+                            (format.to_owned(), open_excel_workbook::export(handle, format, path, true).map_err(engine)?)
                         };
                         json!({ "format": format, "report": report })
                     };
@@ -921,7 +1012,7 @@ impl Office {
                         "caseSensitive": match_case,
                     }] }),
                 )
-                .map_err(replace_failed)?;
+                .map_err(engine)?;
                 let replaced = outcome
                     .get("results")
                     .and_then(Value::as_array)
@@ -933,7 +1024,7 @@ impl Office {
                     Value::Null
                 }
                 else if matches!(extension.as_str(), "project" | "oppt" | "opresent") {
-                    let bytes = open_ppt_deck::save(&loaded.deck, path, true).map_err(replace_failed)?;
+                    let bytes = open_ppt_deck::save(&loaded.deck, path, true).map_err(engine)?;
                     json!({ "format": extension, "report": { "bytes": bytes } })
                 }
                 else {
@@ -943,7 +1034,7 @@ impl Office {
                         &loaded.deck,
                         &json!({ "format": format, "target": path.display().to_string(), "overwrite": true }),
                     )
-                    .map_err(replace_failed)?;
+                    .map_err(engine)?;
                     json!({ "format": format, "report": report })
                 };
                 (replaced, revision, saved)
@@ -1010,6 +1101,7 @@ impl Office {
                         "source": input.display().to_string(),
                         "ok": false,
                         "code": error.code(),
+                        "params": error.params(),
                         "error": error.message(),
                     }));
                 }
@@ -1043,12 +1135,12 @@ impl Office {
                     return Err(OfficeError::usage("`--page` and `--pages` only apply to presentations")
                         .with_code("unsupported-option"));
                 }
-                let opened = open_excel_workbook::open(path).map_err(runtime)?;
+                let opened = open_excel_workbook::open(path).map_err(engine)?;
                 let handle = handle_of(&opened)?;
                 let request = json!({ "format": "svg", "sheet": options.sheet.clone().unwrap_or_default() });
                 let outcome = open_excel_workbook::render(handle, &request);
                 let _ = open_excel_workbook::close(handle);
-                let report = outcome.map_err(runtime)?;
+                let report = outcome.map_err(engine)?;
                 let page = json!({
                     "index": 0,
                     "sheet": report.get("sheet").cloned().unwrap_or(Value::Null),
@@ -1066,7 +1158,7 @@ impl Office {
                         .with_code("unsupported-option"));
                 }
                 let loaded = load_deck(path)?;
-                let report = open_ppt_deck::render(&loaded.deck).map_err(runtime)?;
+                let report = open_ppt_deck::render(&loaded.deck).map_err(engine)?;
                 let all = report.get("pages").and_then(Value::as_array).cloned().unwrap_or_default();
                 let total = all.len();
                 let pages = match (&options.page, options.pages.as_deref()) {
@@ -1192,6 +1284,7 @@ impl Office {
                         "outDir": target.display().to_string(),
                         "ok": false,
                         "code": error.code(),
+                        "params": error.params(),
                         "error": error.message(),
                     }));
                 }
@@ -1220,11 +1313,11 @@ impl Office {
         }
         match kind {
             Kind::Word => {
-                let opened = open_word_document::open(path).map_err(runtime)?;
+                let opened = open_word_document::open(path).map_err(engine)?;
                 let handle = handle_of(&opened)?;
-                let summary = open_word_document::summary(handle).map_err(runtime)?;
-                let stats = open_word_document::stats(handle).map_err(runtime)?;
-                let report = open_word_document::inspect(handle, selected.map(<[String]>::to_vec)).map_err(runtime)?;
+                let summary = open_word_document::summary(handle).map_err(engine)?;
+                let stats = open_word_document::stats(handle).map_err(engine)?;
+                let report = open_word_document::inspect(handle, selected.map(<[String]>::to_vec)).map_err(engine)?;
                 let _ = open_word_document::close(handle);
                 Ok(json!({
                     "kind": kind.label(),
@@ -1236,10 +1329,10 @@ impl Office {
                 }))
             }
             Kind::Excel => {
-                let opened = open_excel_workbook::open(path).map_err(runtime)?;
+                let opened = open_excel_workbook::open(path).map_err(engine)?;
                 let handle = handle_of(&opened)?;
-                let summary = open_excel_workbook::summary(handle).map_err(runtime)?;
-                let report = open_excel_workbook::inspect(handle, selected.map(<[String]>::to_vec)).map_err(runtime)?;
+                let summary = open_excel_workbook::summary(handle).map_err(engine)?;
+                let report = open_excel_workbook::inspect(handle, selected.map(<[String]>::to_vec)).map_err(engine)?;
                 let _ = open_excel_workbook::close(handle);
                 Ok(json!({
                     "kind": kind.label(),
@@ -1253,7 +1346,7 @@ impl Office {
                 let loaded = load_deck(path)?;
                 let summary = open_ppt_deck::summary(&loaded.deck);
                 let parsed = match selected {
-                    Some(names) => Some(open_ppt_deck::parse_checks(&names.join(",")).map_err(runtime)?),
+                    Some(names) => Some(open_ppt_deck::parse_checks(&names.join(",")).map_err(engine)?),
                     None => None,
                 };
                 let report = open_ppt_deck::inspect(&loaded.deck, parsed);
@@ -1267,7 +1360,7 @@ impl Office {
                 }))
             }
             Kind::Pdf => {
-                let report = open_pdf_core::inspect(path).map_err(runtime)?;
+                let report = open_pdf_core::inspect(path).map_err(engine)?;
                 let report = serde_json::to_value(report).map_err(|error| OfficeError::runtime(error.to_string()))?;
                 Ok(json!({
                     "kind": kind.label(),
@@ -1326,26 +1419,26 @@ impl Office {
 
         let report = match kind {
             Kind::Word => {
-                let opened = open_word_document::open(input).map_err(conversion)?;
+                let opened = open_word_document::open(input).map_err(engine)?;
                 let handle = handle_of(&opened)?;
-                let report = open_word_document::export(handle, &format, out, overwrite).map_err(conversion)?;
+                let report = open_word_document::export(handle, &format, out, overwrite).map_err(engine)?;
                 let _ = open_word_document::close(handle);
                 report
             }
             Kind::Excel => {
-                let opened = open_excel_workbook::open(input).map_err(conversion)?;
+                let opened = open_excel_workbook::open(input).map_err(engine)?;
                 let handle = handle_of(&opened)?;
-                let report = open_excel_workbook::export(handle, &format, out, overwrite).map_err(conversion)?;
+                let report = open_excel_workbook::export(handle, &format, out, overwrite).map_err(engine)?;
                 let _ = open_excel_workbook::close(handle);
                 report
             }
             Kind::Presentation => {
-                let loaded = load_deck(input).map_err(|error| error.with_code("conversion-failed"))?;
+                let loaded = load_deck(input)?;
                 open_ppt_deck::export(
                     &loaded.deck,
                     &json!({ "format": format, "target": out.display().to_string(), "overwrite": overwrite }),
                 )
-                .map_err(conversion)?
+                .map_err(engine)?
             }
             Kind::Pdf => extract_pdf_text(input, out, options.pages.as_deref())?,
         };
@@ -1407,6 +1500,7 @@ impl Office {
                         "target": target.display().to_string(),
                         "ok": false,
                         "code": error.code(),
+                        "params": error.params(),
                         "error": error.message(),
                     }));
                 }
@@ -1443,6 +1537,7 @@ impl Office {
                         "source": input.display().to_string(),
                         "ok": false,
                         "code": error.code(),
+                        "params": error.params(),
                         "error": error.message(),
                     }));
                 }
@@ -1513,6 +1608,7 @@ impl Office {
                         "source": input.display().to_string(),
                         "ok": false,
                         "code": error.code(),
+                        "params": error.params(),
                         "error": error.message(),
                     }));
                 }
@@ -1549,6 +1645,7 @@ impl Office {
                         "source": input.display().to_string(),
                         "ok": false,
                         "code": error.code(),
+                        "params": error.params(),
                         "error": error.message(),
                     }));
                 }
@@ -1571,7 +1668,7 @@ impl Office {
         let container = self.probe(path)?.get("container").cloned().unwrap_or(Value::Null);
         let (revision, summary, losses, warnings) = match kind {
             Kind::Word => {
-                let opened = open_word_document::open(path).map_err(runtime)?;
+                let opened = open_word_document::open(path).map_err(engine)?;
                 let handle = handle_of(&opened)?;
                 let _ = open_word_document::close(handle);
                 let summary = opened.get("document").cloned().unwrap_or(Value::Null);
@@ -1583,7 +1680,7 @@ impl Office {
                 )
             }
             Kind::Excel => {
-                let opened = open_excel_workbook::open(path).map_err(runtime)?;
+                let opened = open_excel_workbook::open(path).map_err(engine)?;
                 let handle = handle_of(&opened)?;
                 let _ = open_excel_workbook::close(handle);
                 let summary = opened.get("workbook").cloned().unwrap_or(Value::Null);
@@ -1595,7 +1692,7 @@ impl Office {
                 (summary.get("revision").cloned().unwrap_or(Value::Null), summary, json!(loaded.losses), json!([]))
             }
             Kind::Pdf => {
-                let report = open_pdf_core::inspect(path).map_err(runtime)?;
+                let report = open_pdf_core::inspect(path).map_err(engine)?;
                 (
                     Value::Null,
                     json!({ "version": report.version, "pages": report.pages, "encrypted": report.encrypted }),
@@ -1649,6 +1746,7 @@ impl Office {
                         "source": input.display().to_string(),
                         "ok": false,
                         "code": error.code(),
+                        "params": error.params(),
                         "error": error.message(),
                     }));
                 }
@@ -1678,28 +1776,28 @@ impl Office {
         }
         let (format, losses) = match kind {
             Kind::Word => {
-                let opened = open_word_document::open(path).map_err(conversion)?;
+                let opened = open_word_document::open(path).map_err(engine)?;
                 let handle = handle_of(&opened)?;
-                let report = open_word_document::export(handle, "txt", out, overwrite).map_err(conversion)?;
+                let report = open_word_document::export(handle, "txt", out, overwrite).map_err(engine)?;
                 let _ = open_word_document::close(handle);
                 ("txt", report.get("losses").cloned().unwrap_or_else(|| json!([])))
             }
             Kind::Excel => {
-                let opened = open_excel_workbook::open(path).map_err(conversion)?;
+                let opened = open_excel_workbook::open(path).map_err(engine)?;
                 let handle = handle_of(&opened)?;
-                let report = open_excel_workbook::export(handle, "csv", out, overwrite).map_err(conversion)?;
+                let report = open_excel_workbook::export(handle, "csv", out, overwrite).map_err(engine)?;
                 let _ = open_excel_workbook::close(handle);
                 ("csv", report.get("losses").cloned().unwrap_or_else(|| json!([])))
             }
             Kind::Presentation => {
-                let loaded = load_deck(path).map_err(|error| error.with_code("conversion-failed"))?;
+                let loaded = load_deck(path)?;
                 let text = deck_text(&loaded.deck)?;
                 fs::write(out, text.as_bytes())
                     .map_err(|error| OfficeError::runtime(format!("cannot write {}: {error}", out.display())).with_code("output-unwritable"))?;
                 ("text", json!(loaded.losses))
             }
             Kind::Pdf => {
-                let report = open_pdf_core::extract_text(path).map_err(conversion)?;
+                let report = open_pdf_core::extract_text(path).map_err(engine)?;
                 fs::write(out, report.markdown.as_bytes())
                     .map_err(|error| OfficeError::runtime(format!("cannot write {}: {error}", out.display())).with_code("output-unwritable"))?;
                 ("markdown", json!(report.losses))
@@ -1766,6 +1864,7 @@ impl Office {
                         "target": target.display().to_string(),
                         "ok": false,
                         "code": error.code(),
+                        "params": error.params(),
                         "error": error.message(),
                     }));
                 }
@@ -1911,7 +2010,7 @@ pub fn presentation_hits(document: &Value, query: &str, limit: usize) -> (Vec<Va
 
 /// Finds one query in a PDF's extracted Markdown, one hit per matching line.
 fn pdf_search(path: &Path, query: &str, limit: usize) -> Result<(Vec<Value>, bool, Vec<Value>), OfficeError> {
-    let report = open_pdf_core::extract_text(path).map_err(runtime)?;
+    let report = open_pdf_core::extract_text(path).map_err(engine)?;
     let mut hits = Vec::new();
     for (index, line) in report.markdown.lines().enumerate() {
         if hits.len() >= limit {
@@ -2027,11 +2126,11 @@ struct LoadedDeck {
 fn load_deck(path: &Path) -> Result<LoadedDeck, OfficeError> {
     let extension = path.extension().and_then(|value| value.to_str()).unwrap_or_default().to_ascii_lowercase();
     if matches!(extension.as_str(), "project" | "oppt" | "opresent") {
-        let deck = open_ppt_deck::open(path).map_err(runtime)?;
+        let deck = open_ppt_deck::open(path).map_err(engine)?;
         Ok(LoadedDeck { deck, losses: Vec::new() })
     }
     else {
-        let outcome = open_ppt_deck::import_pptx(path).map_err(runtime)?;
+        let outcome = open_ppt_deck::import_pptx(path).map_err(engine)?;
         Ok(LoadedDeck { deck: outcome.deck, losses: outcome.losses })
     }
 }
@@ -2072,7 +2171,7 @@ fn extract_pdf_text(input: &Path, out: &Path, pages: Option<&str>) -> Result<Val
             let (report, selected) = extract_pdf_pages(input, ranges)?;
             (report, Some((ranges, selected)))
         }
-        None => (open_pdf_core::extract_text(input).map_err(conversion)?, None),
+        None => (open_pdf_core::extract_text(input).map_err(engine)?, None),
     };
     fs::write(out, report.markdown.as_bytes())
         .map_err(|error| OfficeError::runtime(format!("cannot write {}: {error}", out.display())).with_code("output-unwritable"))?;
@@ -2092,16 +2191,16 @@ fn extract_pdf_text(input: &Path, out: &Path, pages: Option<&str>) -> Result<Val
 
 /// Extracts only the selected pages by arranging the source into a temporary PDF first.
 fn extract_pdf_pages(input: &Path, ranges: &str) -> Result<(open_pdf_core::ExtractReport, Vec<usize>), OfficeError> {
-    let info = open_pdf_core::inspect(input).map_err(conversion)?;
+    let info = open_pdf_core::inspect(input).map_err(engine)?;
     let selected = parse_page_ranges(ranges, info.pages)?;
     if selected.len() == info.pages && selected.iter().copied().eq(1..=info.pages) {
-        return Ok((open_pdf_core::extract_text(input).map_err(conversion)?, selected));
+        return Ok((open_pdf_core::extract_text(input).map_err(engine)?, selected));
     }
     let remove = (1..=info.pages).filter(|page| !selected.contains(page)).collect::<Vec<_>>();
     let temporary = temporary_pdf_path();
     let request = open_pdf_core::DocumentArrange { order: Some(selected.clone()), rotate: None, remove: Some(remove) };
-    open_pdf_core::arrange(input, &temporary, &request).map_err(conversion)?;
-    let extracted = open_pdf_core::extract_text(&temporary).map_err(conversion);
+    open_pdf_core::arrange(input, &temporary, &request).map_err(engine)?;
+    let extracted = open_pdf_core::extract_text(&temporary).map_err(engine);
     let _ = fs::remove_file(&temporary);
     Ok((extracted?, selected))
 }
@@ -2175,18 +2274,14 @@ fn write_svg(path: &Path, page: &Value, overwrite: bool) -> Result<(), OfficeErr
         .map_err(|error| OfficeError::runtime(format!("cannot write {}: {error}", path.display())).with_code("unwritable"))
 }
 
-fn runtime(error: impl fmt::Display) -> OfficeError {
-    OfficeError::runtime(error.to_string())
-}
-
-/// A failure raised by an engine while converting, with its stable batch code.
-fn conversion(error: impl fmt::Display) -> OfficeError {
-    OfficeError::runtime(error.to_string()).with_code("conversion-failed")
-}
-
-/// A failure raised by an engine while replacing or saving text back in place.
-fn replace_failed(error: impl fmt::Display) -> OfficeError {
-    OfficeError::runtime(error.to_string()).with_code("replace-failed")
+/// Wraps an engine failure, keeping its stable code and typed parameters.
+fn engine(error: impl EngineFailure) -> OfficeError {
+    OfficeError {
+        message: error.stable_message(),
+        usage: false,
+        code: error.stable_code().to_owned(),
+        params: error.stable_params(),
+    }
 }
 
 /// The export route that writes a word document back under its own extension.
