@@ -1607,3 +1607,38 @@ fn extract_protects_targets_and_refuses_bad_routes() {
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn extract_many_writes_one_text_file_per_document() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-extract-many-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let markdown = dir.join("notes.md");
+    fs::write(&markdown, b"# Title\n\nBody.\n").expect("write markdown");
+    let pdf = two_page_pdf(&dir);
+    let out_dir = dir.join("text");
+
+    let inputs = vec![markdown.clone(), pdf.clone(), PathBuf::from("missing-extract.docx")];
+    let report = office.extract_many(&inputs, &out_dir, false).expect("extract batch");
+    assert_eq!(report["extracted"], json!(2));
+    assert_eq!(report["failed"], json!(1));
+    let results = report["results"].as_array().expect("results array");
+    assert_eq!(results.len(), 3);
+    assert_eq!(results[0]["source"], json!(markdown.display().to_string()));
+    assert_eq!(results[0]["target"], json!(out_dir.join("notes.txt").display().to_string()));
+    assert_eq!(results[0]["ok"], json!(true));
+    assert_eq!(results[0]["kind"], json!("word"));
+    assert_eq!(results[0]["format"], json!("txt"));
+    assert!(out_dir.join("notes.txt").is_file());
+    assert_eq!(results[1]["target"], json!(out_dir.join("source.md").display().to_string()));
+    assert_eq!(results[1]["kind"], json!("pdf"));
+    assert_eq!(results[1]["format"], json!("markdown"));
+    assert!(out_dir.join("source.md").is_file());
+    assert_eq!(results[2]["source"], json!("missing-extract.docx"));
+    assert_eq!(results[2]["ok"], json!(false));
+    assert_eq!(results[2]["code"], json!("not-found"));
+
+    assert!(office.extract_many(&[], &out_dir, false).expect_err("empty inputs").is_usage());
+    assert!(office.extract_many(&inputs, &PathBuf::from(""), false).expect_err("empty out dir").is_usage());
+    let _ = fs::remove_dir_all(&dir);
+}

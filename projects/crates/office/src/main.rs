@@ -100,20 +100,41 @@ fn validate(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
     Ok(())
 }
 
-/// Parses `extract` paths and hands the request to the library.
+/// Parses `extract` paths and reports one document or a batch.
 ///
-/// Takes exactly one document path and one output path.
+/// The single form takes one document path and one output path; the batch form
+/// takes several documents and `--out-dir <dir>`. A batch exits non-zero when
+/// any input failed.
 fn extract(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
     let mut overwrite = false;
     let mut paths = Vec::new();
-    for argument in arguments {
-        match argument.as_str() {
+    let mut out_dir = None;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--out-dir" => out_dir = Some(PathBuf::from(value_of(arguments, &mut index, "--out-dir")?)),
             "--overwrite" => overwrite = true,
             value if value.starts_with('-') => {
                 return Err(OfficeError::usage(format!("unknown option `{value}`")));
             }
             value => paths.push(PathBuf::from(value)),
         }
+        index += 1;
+    }
+    if paths.is_empty() {
+        return Err(OfficeError::usage("a document path is required"));
+    }
+    if let Some(dir) = out_dir {
+        if paths.len() < 2 {
+            return Err(OfficeError::usage("`--out-dir` needs more than one input; pass an output path for a single file"));
+        }
+        let report = office.extract_many(&paths, &dir, overwrite)?;
+        print_json(&report)?;
+        let failed = report.get("failed").and_then(Value::as_u64).unwrap_or_default();
+        if failed > 0 {
+            return Err(OfficeError::runtime(format!("{failed} of {} documents failed", paths.len())));
+        }
+        return Ok(());
     }
     if paths.len() != 2 {
         return Err(OfficeError::usage("`extract` needs one document path and one output path"));
@@ -563,6 +584,7 @@ fn usage() {
          \x20 open-office inspect <file>... [--checks <list>]\n\
          \x20 open-office validate <file>...\n\
          \x20 open-office extract <file> <out> [--overwrite]\n\
+         \x20 open-office extract <file>... --out-dir <dir> [--overwrite]\n\
          \x20 open-office stats <file>...\n\
          \x20 open-office totals <file>...\n\
          \x20 open-office metadata <file>...\n\

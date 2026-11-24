@@ -1717,6 +1717,62 @@ impl Office {
             "losses": losses,
         }))
     }
+
+    /// Extracts many documents into one text file per source, named after its stem.
+    ///
+    /// Each family keeps its own natural text extension in the output directory:
+    /// word documents and decks become `.txt`, workbooks `.csv` and PDFs `.md`.
+    /// A failing document does not stop the batch, exactly like the other batch
+    /// verbs: each entry carries `ok` and either the written `target`, family,
+    /// `format` and `bytes` or the stable `code` and `error` message.
+    pub fn extract_many(&self, inputs: &[PathBuf], out_dir: &Path, overwrite: bool) -> Result<Value, OfficeError> {
+        if inputs.is_empty() {
+            return Err(OfficeError::usage("at least one document is required"));
+        }
+        if out_dir.as_os_str().is_empty() {
+            return Err(OfficeError::usage("`--out-dir <dir>` is required"));
+        }
+        fs::create_dir_all(out_dir)
+            .map_err(|error| {
+                OfficeError::runtime(format!("cannot create {}: {error}", out_dir.display())).with_code("output-unwritable")
+            })?;
+        let mut extracted = 0;
+        let mut failed = 0;
+        let mut results = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            let stem = input.file_stem().map(|value| value.to_string_lossy().into_owned()).unwrap_or_default();
+            let extension = match Kind::of_path(input) {
+                Ok(Kind::Excel) => "csv",
+                Ok(Kind::Pdf) => "md",
+                _ => "txt",
+            };
+            let target = out_dir.join(format!("{stem}.{extension}"));
+            match self.extract(input, &target, overwrite) {
+                Ok(report) => {
+                    extracted += 1;
+                    results.push(json!({
+                        "source": input.display().to_string(),
+                        "target": target.display().to_string(),
+                        "ok": true,
+                        "kind": report.get("kind").cloned().unwrap_or(Value::Null),
+                        "format": report.get("format").cloned().unwrap_or(Value::Null),
+                        "bytes": report.get("bytes").cloned().unwrap_or(Value::Null),
+                    }));
+                }
+                Err(error) => {
+                    failed += 1;
+                    results.push(json!({
+                        "source": input.display().to_string(),
+                        "target": target.display().to_string(),
+                        "ok": false,
+                        "code": error.code(),
+                        "error": error.message(),
+                    }));
+                }
+            }
+        }
+        Ok(json!({ "extracted": extracted, "failed": failed, "results": results }))
+    }
 }
 
 /// Name of the platform command that opens a file in its default application.
