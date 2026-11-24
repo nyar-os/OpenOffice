@@ -129,6 +129,24 @@ fn open_routes_a_file_and_can_print_the_route() {
 }
 
 #[test]
+fn open_print_routes_every_document_family() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-open-families-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let cases = [("report.docx", "word"), ("book.xlsx", "excel"), ("deck.pptx", "presentation"), ("scan.pdf", "pdf")];
+    for (name, family) in cases {
+        let path = dir.join(name);
+        fs::write(&path, b"placeholder").expect("write fixture");
+        let report = office.open(&path, true).expect("print route");
+        assert_eq!(report["kind"], json!(family), "{name} routes to the right family");
+        assert_eq!(report["path"], json!(path.display().to_string()));
+        assert_eq!(report["opened"], json!(false), "print mode never launches a viewer");
+        assert!(!report["opener"].as_str().expect("opener").is_empty());
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn search_many_reports_each_input_in_order() {
     let office = Office::new();
     let dir = std::env::temp_dir().join(format!("open-office-search-many-{}", std::process::id()));
