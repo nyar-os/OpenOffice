@@ -38,7 +38,7 @@ open-office formats
 
 Unknown options are usage errors. `convert` lowercases `--format`, and batch targets are written as `<out-dir>/<source-stem>.<format>`.
 
-`open` is a routing convenience, not an editor. It checks the extension and that the file exists, then hands the file to the platform. A missing opener or a non-zero exit reports `open-failed`; use the individual product CLI (`open-word open`, `open-excel open`, `open-ppt open`, `open-pdf open`) when the product GUI or reader should handle the file.
+`open` is a routing convenience, not an editor. It checks the extension and that the file exists, then hands the file to the platform. A missing opener or a non-zero exit reports `open-failed`; use the individual product CLI (`open-word open`, `open-excel open`, `open-ppt open`, `open-pdf open`) when the product GUI or reader should handle the file. The platform file-association entry is signed off as convenience only. The single-binary four-module GUI routing (each family handed to its owning product viewer) is code-complete and covered by the print-mode route tests, but its real-machine acceptance on each platform is still pending and has not been signed off.
 
 Exit codes: `0` success, `2` usage error, `1` runtime error. A batch conversion, a multi-file `probe`, `stats`, `totals`, `outline`, `search`, `replace`, `inspect`, `validate` or `extract` prints its JSON report and then exits `1` when `failed` is greater than zero.
 
