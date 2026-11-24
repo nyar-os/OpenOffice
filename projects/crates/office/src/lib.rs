@@ -187,7 +187,7 @@ impl Office {
     pub fn capabilities(&self) -> Value {
         json!({
             "engine": { "package": "open-office", "version": VERSION },
-            "commands": ["probe", "inspect", "validate", "convert", "open", "formats", "stats", "totals", "metadata", "outline", "compare", "search", "replace", "render", "capabilities", "version"],
+            "commands": ["probe", "inspect", "validate", "extract", "convert", "open", "formats", "stats", "totals", "metadata", "outline", "compare", "search", "replace", "render", "capabilities", "version"],
             "modules": {
                 "word": open_word_document::capabilities(),
                 "excel": open_excel_workbook::capabilities(),
@@ -1656,6 +1656,67 @@ impl Office {
         }
         Ok(json!({ "validated": validated, "failed": failed, "results": results }))
     }
+
+    /// Extracts plain text from one document into one output file.
+    ///
+    /// The owning engine does the reading and the report names the family that
+    /// handled the document: a word document exports its text projection as
+    /// `txt`, a workbook exports its primary sheet grid as `csv`, a deck is
+    /// projected to slide titles, body text and speaker notes as `text`, and a
+    /// PDF is projected to its extracted `markdown`. The report carries the
+    /// written byte count and every loss the engine kept. An existing target is
+    /// refused without `overwrite`, exactly like `convert`.
+    pub fn extract(&self, path: &Path, out: &Path, overwrite: bool) -> Result<Value, OfficeError> {
+        let kind = Kind::of_path(path)?;
+        verify_container(path, kind)?;
+        if out.exists() && !overwrite {
+            return Err(OfficeError::runtime(format!(
+                "{} already exists; pass --overwrite to replace it",
+                out.display()
+            ))
+            .with_code("target-exists"));
+        }
+        let (format, losses) = match kind {
+            Kind::Word => {
+                let opened = open_word_document::open(path).map_err(conversion)?;
+                let handle = handle_of(&opened)?;
+                let report = open_word_document::export(handle, "txt", out, overwrite).map_err(conversion)?;
+                let _ = open_word_document::close(handle);
+                ("txt", report.get("losses").cloned().unwrap_or_else(|| json!([])))
+            }
+            Kind::Excel => {
+                let opened = open_excel_workbook::open(path).map_err(conversion)?;
+                let handle = handle_of(&opened)?;
+                let report = open_excel_workbook::export(handle, "csv", out, overwrite).map_err(conversion)?;
+                let _ = open_excel_workbook::close(handle);
+                ("csv", report.get("losses").cloned().unwrap_or_else(|| json!([])))
+            }
+            Kind::Presentation => {
+                let loaded = load_deck(path).map_err(|error| error.with_code("conversion-failed"))?;
+                let text = deck_text(&loaded.deck)?;
+                fs::write(out, text.as_bytes())
+                    .map_err(|error| OfficeError::runtime(format!("cannot write {}: {error}", out.display())).with_code("output-unwritable"))?;
+                ("text", json!(loaded.losses))
+            }
+            Kind::Pdf => {
+                let report = open_pdf_core::extract_text(path).map_err(conversion)?;
+                fs::write(out, report.markdown.as_bytes())
+                    .map_err(|error| OfficeError::runtime(format!("cannot write {}: {error}", out.display())).with_code("output-unwritable"))?;
+                ("markdown", json!(report.losses))
+            }
+        };
+        let bytes = fs::metadata(out)
+            .map_err(|error| OfficeError::runtime(format!("cannot read back {}: {error}", out.display())).with_code("output-unwritable"))?
+            .len();
+        Ok(json!({
+            "kind": kind.label(),
+            "path": path.display().to_string(),
+            "out": out.display().to_string(),
+            "format": format,
+            "bytes": bytes,
+            "losses": losses,
+        }))
+    }
 }
 
 /// Name of the platform command that opens a file in its default application.
@@ -1917,6 +1978,35 @@ fn load_deck(path: &Path) -> Result<LoadedDeck, OfficeError> {
         let outcome = open_ppt_deck::import_pptx(path).map_err(runtime)?;
         Ok(LoadedDeck { deck: outcome.deck, losses: outcome.losses })
     }
+}
+
+/// Projects one deck into plain text: one block per slide with its title, the
+/// text leaves of its elements and its speaker notes.
+///
+/// The deck engine keeps text in nested paragraph, run and table nodes, so each
+/// slide is serialized and walked generically, exactly like presentation
+/// search does.
+fn deck_text(deck: &open_ppt_deck::EditableDeck) -> Result<String, OfficeError> {
+    let document = serde_json::to_value(deck.document())
+        .map_err(|error| OfficeError::runtime(error.to_string()))?;
+    let slides = document.get("slides").and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut blocks = Vec::with_capacity(slides.len());
+    for (index, slide) in slides.iter().enumerate() {
+        let title = deck.slides().get(index).map(|slide| slide.title()).unwrap_or_default();
+        let heading = if title.is_empty() {
+            format!("## Slide {}", index + 1)
+        }
+        else {
+            format!("## Slide {}: {title}", index + 1)
+        };
+        let mut lines = vec![heading];
+        collect_json_text(slide.get("elements"), &mut lines);
+        if let Some(notes) = slide.get("notes").and_then(Value::as_str).map(str::trim).filter(|notes| !notes.is_empty()) {
+            lines.push(format!("Notes: {notes}"));
+        }
+        blocks.push(lines.join("\n"));
+    }
+    Ok(blocks.join("\n\n"))
 }
 
 /// Writes the extracted Markdown projection of a PDF to a text target.

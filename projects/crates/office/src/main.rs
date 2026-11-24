@@ -45,6 +45,7 @@ fn run(arguments: &[String]) -> Result<(), OfficeError> {
         "probe" | "inspect-file" | "inspect_file" => probe(&office, rest),
         "inspect" => inspect(&office, rest),
         "validate" => validate(&office, rest),
+        "extract" => extract(&office, rest),
         "stats" => stats(&office, rest),
         "totals" => totals(&office, rest),
         "metadata" => metadata(&office, rest),
@@ -97,6 +98,27 @@ fn validate(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
         return Err(OfficeError::runtime(format!("{failed} of {} documents failed", paths.len())));
     }
     Ok(())
+}
+
+/// Parses `extract` paths and hands the request to the library.
+///
+/// Takes exactly one document path and one output path.
+fn extract(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
+    let mut overwrite = false;
+    let mut paths = Vec::new();
+    for argument in arguments {
+        match argument.as_str() {
+            "--overwrite" => overwrite = true,
+            value if value.starts_with('-') => {
+                return Err(OfficeError::usage(format!("unknown option `{value}`")));
+            }
+            value => paths.push(PathBuf::from(value)),
+        }
+    }
+    if paths.len() != 2 {
+        return Err(OfficeError::usage("`extract` needs one document path and one output path"));
+    }
+    print_json(&office.extract(&paths[0], &paths[1], overwrite)?)
 }
 
 /// Parses `stats` paths and hands one or many requests to the library.
@@ -540,6 +562,7 @@ fn usage() {
          \x20 open-office probe <file>...\n\
          \x20 open-office inspect <file>... [--checks <list>]\n\
          \x20 open-office validate <file>...\n\
+         \x20 open-office extract <file> <out> [--overwrite]\n\
          \x20 open-office stats <file>...\n\
          \x20 open-office totals <file>...\n\
          \x20 open-office metadata <file>...\n\
@@ -563,6 +586,7 @@ fn usage() {
          \x20 open-office open report.docx --print\n\
          \x20 open-office inspect a.docx b.pdf c.xlsx\n\
          \x20 open-office validate a.docx b.pdf c.xlsx\n\
+         \x20 open-office extract paper.pdf paper.txt\n\
          \x20 open-office stats report.docx\n\
          \x20 open-office stats a.docx b.pdf c.xlsx\n\
          \x20 open-office totals a.docx b.pdf c.xlsx deck.pptx\n\

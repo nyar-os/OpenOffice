@@ -1520,3 +1520,90 @@ fn validate_many_reports_each_input_in_order() {
     assert_eq!(unsupported.code(), "unsupported-extension");
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn extract_writes_plain_text_for_every_family() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-extract-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let markdown = dir.join("notes.md");
+    fs::write(&markdown, b"# Title\n\nBody.\n").expect("write markdown");
+    let created = open_excel_workbook::create(&json!({ "title": "Extracted" })).expect("create");
+    let handle = handle_of(&created).expect("handle");
+    open_excel_workbook::edit(
+        handle,
+        &json!({ "operations": [{ "op": "cell.set", "sheet": "Sheet1", "reference": "A1", "value": 42 }] }),
+    )
+    .expect("seed");
+    let sheet = dir.join("budget.oexcel");
+    open_excel_workbook::save(handle, &sheet, true).expect("save");
+    let _ = open_excel_workbook::close(handle);
+    let deck = open_ppt_deck::create(open_ppt_deck::CreateRequest {
+        title: Some("Extracted".to_owned()),
+        size: None,
+        theme: None,
+        slides: vec!["Intro".to_owned(), "Plan".to_owned()],
+    })
+    .expect("create deck");
+    let slides = dir.join("deck.project");
+    open_ppt_deck::save(&deck, &slides, true).expect("save deck");
+    let pdf = two_page_pdf(&dir);
+
+    let word = office.extract(&markdown, &dir.join("notes.txt"), false).expect("extract word");
+    assert_eq!(word["kind"], json!("word"));
+    assert_eq!(word["format"], json!("txt"));
+    let text = fs::read_to_string(dir.join("notes.txt")).expect("read word text");
+    assert!(text.contains("Title") && text.contains("Body."), "the text projection kept the document: {text}");
+
+    let workbook = office.extract(&sheet, &dir.join("budget.csv"), false).expect("extract workbook");
+    assert_eq!(workbook["kind"], json!("excel"));
+    assert_eq!(workbook["format"], json!("csv"));
+    let grid = fs::read_to_string(dir.join("budget.csv")).expect("read grid");
+    assert!(grid.contains("42"), "the cell grid kept the value: {grid}");
+
+    let presentation = office.extract(&slides, &dir.join("deck.txt"), false).expect("extract deck");
+    assert_eq!(presentation["kind"], json!("presentation"));
+    assert_eq!(presentation["format"], json!("text"));
+    let outline = fs::read_to_string(dir.join("deck.txt")).expect("read deck text");
+    assert!(outline.contains("Intro") && outline.contains("Plan"), "the slide titles survived: {outline}");
+
+    let document = office.extract(&pdf, &dir.join("source.md"), false).expect("extract pdf");
+    assert_eq!(document["kind"], json!("pdf"));
+    assert_eq!(document["format"], json!("markdown"));
+    assert!(document["bytes"].as_u64().expect("bytes") > 0);
+    assert!(document["losses"].as_array().expect("losses").is_empty());
+    let markdown_text = fs::read_to_string(dir.join("source.md")).expect("read pdf text");
+    assert!(markdown_text.contains("Alpha page") && markdown_text.contains("Beta page"), "both pages were extracted: {markdown_text}");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn extract_protects_targets_and_refuses_bad_routes() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-extract-guard-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let markdown = dir.join("notes.md");
+    fs::write(&markdown, b"# Title\n\nBody.\n").expect("write markdown");
+    let out = dir.join("notes.txt");
+    fs::write(&out, b"keep me").expect("write target");
+
+    let refused = office.extract(&markdown, &out, false).expect_err("existing target");
+    assert_eq!(refused.code(), "target-exists");
+    assert_eq!(fs::read_to_string(&out).expect("read target"), "keep me");
+
+    let replaced = office.extract(&markdown, &out, true).expect("overwrite target");
+    assert_eq!(replaced["out"], json!(out.display().to_string()));
+    assert_ne!(fs::read_to_string(&out).expect("read target"), "keep me");
+
+    let missing = office.extract(&dir.join("gone.docx"), &dir.join("gone.txt"), false).expect_err("missing source");
+    assert_eq!(missing.code(), "not-found");
+    let unsupported = office.extract(&dir.join("notes.zip"), &dir.join("notes.txt"), false).expect_err("unsupported source");
+    assert_eq!(unsupported.code(), "unsupported-extension");
+    let mismatched = dir.join("notes.pdf");
+    fs::write(&mismatched, b"just words").expect("write mismatched");
+    let mismatch = office.extract(&mismatched, &dir.join("mismatch.txt"), false).expect_err("mismatched container");
+    assert_eq!(mismatch.code(), "container-mismatch");
+
+    let _ = fs::remove_dir_all(&dir);
+}

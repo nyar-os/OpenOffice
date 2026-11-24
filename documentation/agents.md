@@ -19,6 +19,7 @@ open-office formats
 | `probe <file>...` | none | Reads the bytes; does not route by extension and does not open the document. One path returns the single envelope, more paths return a batch report. Aliases: `inspect-file`, `inspect_file`. |
 | `inspect <file>...` | `--checks <list>` (optional) | Dispatches to the owning engine; one path returns the single envelope, more paths return a batch report. `--checks` is a comma-separated list of rule-check names and applies to Word, Excel and presentation inputs. |
 | `validate <file>...` | none | Opens each document through its owning engine without converting anything and reports what the engine read: `readable`, family, container, the engine's own summary with its `revision`, and the `losses` (word, workbook, deck) or `warnings` (PDF) the engine carried. One path returns the single envelope, more paths return a batch report. |
+| `extract <file> <out> [--overwrite]` | `--overwrite` | Extracts plain text from one document into one output file through its owning engine: word exports its text projection as `txt`, a workbook its primary sheet grid as `csv`, a deck its slide titles, body text and speaker notes as `text`, a PDF its extracted `markdown`. The report names the family that handled the document and carries the written `bytes` and the engine's `losses`. An existing target is refused without `--overwrite`. |
 | `stats <file>...` | none | Lightweight per-family statistics; one path returns the single envelope, more paths return a batch report. |
 | `totals <file>...` | none | Aggregates the statistics of every input into one suite-level report with per-family sums; a failing document is counted in `failed` and does not stop the batch. |
 | `metadata <file>...` | one or more paths | Reports the descriptive metadata the owning engine stores: `{ title }` for word, workbook and presentation files, and the whole PDF information dictionary (`title`, `author`, `subject`, `keywords`, `creator`, `producer`) for PDFs. Nothing is derived, so a missing field is `null`. With several paths it reports a best-effort batch (`counted`, `failed`, `results`) instead of stopping at the first failure. |
@@ -38,7 +39,7 @@ Unknown options are usage errors. `convert` lowercases `--format`, and batch tar
 
 `open` is a routing convenience, not an editor. It checks the extension and that the file exists, then hands the file to the platform. A missing opener or a non-zero exit reports `open-failed`; use the individual product CLI (`open-word open`, `open-excel open`, `open-ppt open`, `open-pdf open`) when the product GUI or reader should handle the file.
 
-Exit codes: `0` success, `2` usage error, `1` runtime error. A batch conversion, a multi-file `probe`, `stats`, `totals`, `outline`, `search`, `replace`, `inspect` or `validate` prints its JSON report and then exits `1` when `failed` is greater than zero.
+Exit codes: `0` success, `2` usage error, `1` runtime error. A batch conversion, a multi-file `probe`, `stats`, `totals`, `outline`, `search`, `replace`, `inspect`, `validate` or `extract` prints its JSON report and then exits `1` when `failed` is greater than zero.
 
 ## Report envelopes
 
@@ -74,7 +75,7 @@ when the detector quoted some.
 ```json
 {
   "engine": { "package": "open-office", "version": "0.1.0" },
-  "commands": ["probe", "inspect", "validate", "convert", "open", "formats", "stats", "totals", "metadata", "outline", "compare", "search", "replace", "render", "capabilities", "version"],
+  "commands": ["probe", "inspect", "validate", "extract", "convert", "open", "formats", "stats", "totals", "metadata", "outline", "compare", "search", "replace", "render", "capabilities", "version"],
   "modules": {
     "word": {},
     "excel": {},
@@ -138,6 +139,23 @@ The envelope differs per family because each engine reports different facts:
 - The document is opened, never converted. `summary` is the owning engine's own summary object: the document summary for word, the workbook summary for Excel, the deck summary for presentations; for PDFs it is the small inspect projection `{ version, pages, encrypted }` and `revision` is `null`.
 - `losses` carries the import losses the word, workbook or deck engine reported; `warnings` carries the PDF engine's structure warnings. Both are arrays and may be empty.
 - With more than one path, `validate` returns `{ validated, failed, results: [{ source, ok, kind, container, revision, summary, losses, warnings } | { source, ok: false, code, error }] }` in input order and exits non-zero when any file failed.
+
+### `extract`
+
+```json
+{
+  "kind": "word",
+  "path": "notes.md",
+  "out": "notes.txt",
+  "format": "txt",
+  "bytes": 128,
+  "losses": []
+}
+```
+
+- `kind` names the family that handled the document; `format` is the text form written: `txt` for word, `csv` for the workbook's primary sheet grid, `text` for the deck projection and `markdown` for PDFs.
+- `losses` carries what the engine could not keep (skipped sheets, dropped deck content, unextractable PDF parts) and may be empty.
+- The target is protected: an existing `out` fails with `target-exists` unless `--overwrite`, and a container that contradicts the extension fails with `container-mismatch` before anything is written.
 
 ### `stats`
 
