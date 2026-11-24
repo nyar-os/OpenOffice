@@ -44,6 +44,7 @@ fn run(arguments: &[String]) -> Result<(), OfficeError> {
         "formats" => print_json(&office.formats()),
         "probe" | "inspect-file" | "inspect_file" => probe(&office, rest),
         "inspect" => inspect(&office, rest),
+        "validate" => validate(&office, rest),
         "stats" => stats(&office, rest),
         "totals" => totals(&office, rest),
         "metadata" => metadata(&office, rest),
@@ -76,6 +77,24 @@ fn probe(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
     let failed = report.get("failed").and_then(Value::as_u64).unwrap_or_default();
     if failed > 0 {
         return Err(OfficeError::runtime(format!("{failed} of {} files failed", paths.len())));
+    }
+    Ok(())
+}
+
+/// Parses `validate` paths and reports one document or a batch.
+///
+/// One path keeps the single-document envelope; more than one path returns a
+/// per-input batch report and exits non-zero when any input failed.
+fn validate(office: &Office, arguments: &[String]) -> Result<(), OfficeError> {
+    let paths = document_paths(arguments, "a document path is required")?;
+    if paths.len() == 1 {
+        return print_json(&office.validate(&paths[0])?);
+    }
+    let report = office.validate_many(&paths)?;
+    print_json(&report)?;
+    let failed = report.get("failed").and_then(Value::as_u64).unwrap_or_default();
+    if failed > 0 {
+        return Err(OfficeError::runtime(format!("{failed} of {} documents failed", paths.len())));
     }
     Ok(())
 }
@@ -520,6 +539,7 @@ fn usage() {
          USAGE:\n\
          \x20 open-office probe <file>...\n\
          \x20 open-office inspect <file>... [--checks <list>]\n\
+         \x20 open-office validate <file>...\n\
          \x20 open-office stats <file>...\n\
          \x20 open-office totals <file>...\n\
          \x20 open-office metadata <file>...\n\
@@ -542,6 +562,7 @@ fn usage() {
          \x20 open-office open deck.pptx\n\
          \x20 open-office open report.docx --print\n\
          \x20 open-office inspect a.docx b.pdf c.xlsx\n\
+         \x20 open-office validate a.docx b.pdf c.xlsx\n\
          \x20 open-office stats report.docx\n\
          \x20 open-office stats a.docx b.pdf c.xlsx\n\
          \x20 open-office totals a.docx b.pdf c.xlsx deck.pptx\n\

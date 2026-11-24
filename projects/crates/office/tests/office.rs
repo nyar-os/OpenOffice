@@ -1429,3 +1429,94 @@ fn compare_can_fold_case_in_section_titles() {
     assert_eq!(folded["renamed"], json!([]));
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn validate_opens_each_family_and_reports_the_engine_own_read() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-validate-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let markdown = dir.join("notes.md");
+    fs::write(&markdown, b"# Title\n\nBody.\n").expect("write markdown");
+    let created = open_excel_workbook::create(&json!({ "title": "Validated" })).expect("create");
+    let handle = handle_of(&created).expect("handle");
+    open_excel_workbook::edit(
+        handle,
+        &json!({ "operations": [{ "op": "cell.set", "sheet": "Sheet1", "reference": "A1", "value": 42 }] }),
+    )
+    .expect("seed");
+    let sheet = dir.join("budget.oexcel");
+    open_excel_workbook::save(handle, &sheet, true).expect("save");
+    let _ = open_excel_workbook::close(handle);
+    let deck = open_ppt_deck::create(open_ppt_deck::CreateRequest {
+        title: Some("Validated".to_owned()),
+        size: None,
+        theme: None,
+        slides: vec!["Intro".to_owned(), "Plan".to_owned()],
+    })
+    .expect("create deck");
+    let slides = dir.join("deck.project");
+    open_ppt_deck::save(&deck, &slides, true).expect("save deck");
+    let pdf = two_page_pdf(&dir);
+
+    let word = office.validate(&markdown).expect("validate word");
+    assert_eq!(word["kind"], json!("word"));
+    assert_eq!(word["readable"], json!(true));
+    assert_eq!(word["container"], json!("plain"));
+    assert!(word["revision"].is_number(), "the word engine reports its revision: {word}");
+    assert_eq!(word["summary"]["sections"].as_array().expect("sections").len(), 1);
+    assert!(word["losses"].as_array().expect("losses").is_empty());
+
+    let workbook = office.validate(&sheet).expect("validate workbook");
+    assert_eq!(workbook["kind"], json!("excel"));
+    assert_eq!(workbook["summary"]["cells"], json!(1));
+    assert_eq!(workbook["summary"]["sheets"].as_array().expect("sheets").len(), 1);
+    assert!(workbook["losses"].as_array().expect("losses").is_empty());
+
+    let presentation = office.validate(&slides).expect("validate deck");
+    assert_eq!(presentation["kind"], json!("presentation"));
+    assert_eq!(presentation["summary"]["slides"].as_array().expect("slides").len(), 2);
+    assert!(presentation["losses"].as_array().expect("losses").is_empty());
+
+    let document = office.validate(&pdf).expect("validate pdf");
+    assert_eq!(document["kind"], json!("pdf"));
+    assert_eq!(document["container"], json!("pdf"));
+    assert_eq!(document["revision"], Value::Null);
+    assert_eq!(document["summary"]["pages"], json!(2));
+    assert!(document["warnings"].as_array().expect("warnings").is_empty());
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn validate_many_reports_each_input_in_order() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-validate-many-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let source = dir.join("notes.md");
+    fs::write(&source, b"# Title\n\nBody text.\n").expect("write markdown");
+    let mismatched = dir.join("notes.pdf");
+    fs::write(&mismatched, b"just words").expect("write mismatched");
+
+    let inputs = vec![source.clone(), mismatched.clone(), PathBuf::from("missing-validate.docx")];
+    let report = office.validate_many(&inputs).expect("validate batch");
+    assert_eq!(report["validated"], json!(1));
+    assert_eq!(report["failed"], json!(2));
+    let results = report["results"].as_array().expect("results array");
+    assert_eq!(results.len(), 3);
+    assert_eq!(results[0]["source"], json!(source.display().to_string()));
+    assert_eq!(results[0]["ok"], json!(true));
+    assert_eq!(results[0]["kind"], json!("word"));
+    assert_eq!(results[0]["container"], json!("plain"));
+    assert!(results[0]["summary"].is_object());
+    assert_eq!(results[1]["source"], json!(mismatched.display().to_string()));
+    assert_eq!(results[1]["ok"], json!(false));
+    assert_eq!(results[1]["code"], json!("container-mismatch"));
+    assert_eq!(results[2]["source"], json!("missing-validate.docx"));
+    assert_eq!(results[2]["ok"], json!(false));
+    assert_eq!(results[2]["code"], json!("not-found"));
+
+    assert!(office.validate_many(&[]).expect_err("empty inputs").is_usage());
+    let unsupported = office.validate(&dir.join("notes.zip")).expect_err("unsupported extension");
+    assert_eq!(unsupported.code(), "unsupported-extension");
+    let _ = fs::remove_dir_all(&dir);
+}

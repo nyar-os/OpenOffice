@@ -187,7 +187,7 @@ impl Office {
     pub fn capabilities(&self) -> Value {
         json!({
             "engine": { "package": "open-office", "version": VERSION },
-            "commands": ["probe", "inspect", "convert", "open", "formats", "stats", "totals", "metadata", "outline", "compare", "search", "replace", "render", "capabilities", "version"],
+            "commands": ["probe", "inspect", "validate", "convert", "open", "formats", "stats", "totals", "metadata", "outline", "compare", "search", "replace", "render", "capabilities", "version"],
             "modules": {
                 "word": open_word_document::capabilities(),
                 "excel": open_excel_workbook::capabilities(),
@@ -1555,6 +1555,106 @@ impl Office {
             }
         }
         Ok(json!({ "inspected": inspected, "failed": failed, "results": results }))
+    }
+
+    /// Opens one document through its family engine and reports what the engine read.
+    ///
+    /// Nothing is converted or written: the owning engine opens the document and
+    /// the report names the routed family, the container the bytes proved, the
+    /// engine's own summary with its revision, and every loss or warning the
+    /// engine carried. Word and presentation documents report import `losses`,
+    /// PDFs report structure `warnings`; a document the engine cannot open
+    /// fails with its stable code instead of being guessed about.
+    pub fn validate(&self, path: &Path) -> Result<Value, OfficeError> {
+        let kind = Kind::of_path(path)?;
+        verify_container(path, kind)?;
+        let container = self.probe(path)?.get("container").cloned().unwrap_or(Value::Null);
+        let (revision, summary, losses, warnings) = match kind {
+            Kind::Word => {
+                let opened = open_word_document::open(path).map_err(runtime)?;
+                let handle = handle_of(&opened)?;
+                let _ = open_word_document::close(handle);
+                let summary = opened.get("document").cloned().unwrap_or(Value::Null);
+                (
+                    summary.get("revision").cloned().unwrap_or(Value::Null),
+                    summary,
+                    opened.get("losses").cloned().unwrap_or_else(|| json!([])),
+                    json!([]),
+                )
+            }
+            Kind::Excel => {
+                let opened = open_excel_workbook::open(path).map_err(runtime)?;
+                let handle = handle_of(&opened)?;
+                let _ = open_excel_workbook::close(handle);
+                let summary = opened.get("workbook").cloned().unwrap_or(Value::Null);
+                (summary.get("revision").cloned().unwrap_or(Value::Null), summary, json!([]), json!([]))
+            }
+            Kind::Presentation => {
+                let loaded = load_deck(path)?;
+                let summary = open_ppt_deck::summary(&loaded.deck);
+                (summary.get("revision").cloned().unwrap_or(Value::Null), summary, json!(loaded.losses), json!([]))
+            }
+            Kind::Pdf => {
+                let report = open_pdf_core::inspect(path).map_err(runtime)?;
+                (
+                    Value::Null,
+                    json!({ "version": report.version, "pages": report.pages, "encrypted": report.encrypted }),
+                    json!([]),
+                    json!(report.warnings),
+                )
+            }
+        };
+        Ok(json!({
+            "kind": kind.label(),
+            "path": path.display().to_string(),
+            "readable": true,
+            "container": container,
+            "revision": revision,
+            "summary": summary,
+            "losses": losses,
+            "warnings": warnings,
+        }))
+    }
+
+    /// Validates many documents in input order.
+    ///
+    /// A failing document does not stop the batch: each entry carries `ok` and
+    /// either the same fields the single-document [`Office::validate`] report
+    /// holds or the stable `code` and `error` message.
+    pub fn validate_many(&self, inputs: &[PathBuf]) -> Result<Value, OfficeError> {
+        if inputs.is_empty() {
+            return Err(OfficeError::usage("at least one document is required"));
+        }
+        let mut validated = 0;
+        let mut failed = 0;
+        let mut results = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            match self.validate(input) {
+                Ok(report) => {
+                    validated += 1;
+                    results.push(json!({
+                        "source": input.display().to_string(),
+                        "ok": true,
+                        "kind": report.get("kind").cloned().unwrap_or(Value::Null),
+                        "container": report.get("container").cloned().unwrap_or(Value::Null),
+                        "revision": report.get("revision").cloned().unwrap_or(Value::Null),
+                        "summary": report.get("summary").cloned().unwrap_or(Value::Null),
+                        "losses": report.get("losses").cloned().unwrap_or_else(|| json!([])),
+                        "warnings": report.get("warnings").cloned().unwrap_or_else(|| json!([])),
+                    }));
+                }
+                Err(error) => {
+                    failed += 1;
+                    results.push(json!({
+                        "source": input.display().to_string(),
+                        "ok": false,
+                        "code": error.code(),
+                        "error": error.message(),
+                    }));
+                }
+            }
+        }
+        Ok(json!({ "validated": validated, "failed": failed, "results": results }))
     }
 }
 
