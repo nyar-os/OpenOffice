@@ -1014,6 +1014,31 @@ fn replace_rewrites_presentation_text_in_place() {
 }
 
 #[test]
+fn replace_refuses_a_limit_for_presentations() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-replace-deck-limit-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let deck = open_ppt_deck::create(open_ppt_deck::CreateRequest {
+        title: Some("Limited deck".to_owned()),
+        size: None,
+        theme: None,
+        slides: vec!["Roadmap".to_owned(), "Roadmap review".to_owned()],
+    })
+    .expect("create deck");
+    let project = dir.join("deck.project");
+    open_ppt_deck::save(&deck, &project, true).expect("save project");
+
+    let error = office
+        .replace(&project, "Roadmap", "Plan", &ReplaceOptions { limit: Some(1), ..Default::default() })
+        .expect_err("a limited deck request is refused");
+    assert!(error.is_usage());
+    assert_eq!(error.code(), "unsupported-option");
+    let untouched = office.search(&project, "Roadmap", None).expect("search after refusal");
+    assert_eq!(untouched["hits"].as_array().expect("hits").len(), 2);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn replace_many_reports_each_input_in_order() {
     let office = Office::new();
     let dir = std::env::temp_dir().join(format!("open-office-replace-many-{}", std::process::id()));

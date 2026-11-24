@@ -917,6 +917,14 @@ impl Office {
     /// changed is written back in its own format. With `dry_run` the engine
     /// still counts matches, but `saved` stays null and the file on disk keeps
     /// its bytes. PDF has no replacement route in this build.
+    ///
+    /// `limit` caps per document for word files and per sheet for workbooks;
+    /// the presentation engine replaces every match, so a limited request on a
+    /// deck is refused with `unsupported-option` instead of being ignored. The
+    /// write-back goes to the same path the caller passed, so the caller must
+    /// own that file; exchange formats can drop engine-specific content and
+    /// each loss is reported under `saved.report`. Structured or scoped
+    /// replacement belongs to the owning product's SDK, not to this command.
     pub fn replace(&self, path: &Path, find: &str, with: &str, options: &ReplaceOptions) -> Result<Value, OfficeError> {
         if find.is_empty() {
             return Err(OfficeError::usage("`--find` needs a non-empty query").with_code("invalid-query"));
@@ -929,6 +937,7 @@ impl Office {
             Kind::Word => {
                 let opened = open_word_document::open(path).map_err(engine)?;
                 let handle = handle_of(&opened)?;
+                let _session = WordSession(handle);
                 let mut request = json!({ "find": find, "replace": with, "caseSensitive": match_case });
                 if let Some(limit) = options.limit {
                     request["limit"] = json!(limit);
@@ -949,12 +958,12 @@ impl Office {
                     };
                     json!({ "format": format, "report": report })
                 };
-                let _ = open_word_document::close(handle);
                 (replaced, revision, saved)
             }
             Kind::Excel => {
                 let opened = open_excel_workbook::open(path).map_err(engine)?;
                 let handle = handle_of(&opened)?;
+                let _session = ExcelSession(handle);
                 let summary = open_excel_workbook::summary(handle).map_err(engine)?;
                 let revision = summary.get("revision").cloned().unwrap_or(Value::Null);
                 let mut operations = Vec::new();
@@ -998,10 +1007,15 @@ impl Office {
                     };
                     (replaced, revision, saved)
                 };
-                let _ = open_excel_workbook::close(handle);
                 (replaced, revision, saved)
             }
             Kind::Presentation => {
+                if options.limit.is_some() {
+                    return Err(OfficeError::usage(
+                        "`--limit` applies to word documents and workbooks; the presentation engine replaces every match",
+                    )
+                    .with_code("unsupported-option"));
+                }
                 let mut loaded = load_deck(path)?;
                 let outcome = open_ppt_deck::edit::edit(
                     &mut loaded.deck,
@@ -2251,6 +2265,24 @@ fn temporary_pdf_path() -> PathBuf {
 
 fn invalid_pages(message: impl Into<String>) -> OfficeError {
     OfficeError::usage(message).with_code("invalid-pages")
+}
+
+/// A word-document handle that closes itself when the replace path leaves scope.
+struct WordSession(u64);
+
+impl Drop for WordSession {
+    fn drop(&mut self) {
+        let _ = open_word_document::close(self.0);
+    }
+}
+
+/// A workbook handle that closes itself when the replace path leaves scope.
+struct ExcelSession(u64);
+
+impl Drop for ExcelSession {
+    fn drop(&mut self) {
+        let _ = open_excel_workbook::close(self.0);
+    }
 }
 
 #[doc(hidden)]
