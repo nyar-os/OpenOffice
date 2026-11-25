@@ -14,7 +14,7 @@
         "u": "cargo upgrade --workspace"
     },
     "devDependencies": {
-        "@doki-land/nifty": "^0.1.16"
+        "@doki-land/nifty": "^0.1.17"
     },
     "repository": {
         "type": "git",

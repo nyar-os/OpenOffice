@@ -41,4 +41,4 @@ jobs:
       - name: Upgrade npm for Trusted Publisher support
         run: npm install --global npm@11
       - name: Publish the package to npm
-        run: npx -y -p @doki-land/nifty@0.1.16 nifty publish --access public --version="${RELEASE_TAG#v}"
+        run: npx -y -p @doki-land/nifty@0.1.17 nifty publish --access public --version="${RELEASE_TAG#v}"
