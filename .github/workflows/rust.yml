@@ -19,12 +19,35 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: OpenOffice
-      - name: Checkout sibling engines
+      - name: Read pinned sources
+        id: pins
+        shell: python
         run: |
-          git clone --depth 1 --branch dev https://github.com/nyar-os/OpenWord.git OpenWord
-          git clone --depth 1 --branch dev https://github.com/nyar-os/OpenExcel.git OpenExcel
-          git clone --depth 1 --branch dev https://github.com/nyar-os/OpenPPT.git OpenPPT
-          git clone --depth 1 --branch dev https://github.com/nyar-os/OpenPDF.git OpenPDF
+          import json, os, pathlib
+          lock = json.loads(pathlib.Path("OpenOffice/sibling.lock").read_text())
+          with open(os.environ["GITHUB_ENV"], "a") as env:
+              for name, entry in lock["siblings"].items():
+                  env.write(f"PIN_{name.upper()}={entry['sha']}\n")
+              env.write(f"BOOST_HOST_REV={sorted(lock['boost']['revisions'])[0]}\n")
+      - name: Verify the host manifest pins the locked boost revision
+        shell: python
+        run: |
+          import os, pathlib, sys
+          manifest = pathlib.Path("OpenOffice/projects/crates/office/Cargo.toml").read_text()
+          rev = os.environ["BOOST_HOST_REV"]
+          sys.exit(0 if rev in manifest else f"host Cargo.toml does not pin boost rev {rev}")
+      # The crate uses path dependencies on the four sibling engines, checked out
+      # at the exact SHAs committed in OpenOffice/sibling.lock, not dev tips.
+      - name: Checkout sibling engines at pinned SHAs
+        run: |
+          git clone https://github.com/nyar-os/OpenWord.git OpenWord
+          git -C OpenWord checkout ${{ env.PIN_OPENWORD }}
+          git clone https://github.com/nyar-os/OpenExcel.git OpenExcel
+          git -C OpenExcel checkout ${{ env.PIN_OPENEXCEL }}
+          git clone https://github.com/nyar-os/OpenPPT.git OpenPPT
+          git -C OpenPPT checkout ${{ env.PIN_OPENPPT }}
+          git clone https://github.com/nyar-os/OpenPDF.git OpenPDF
+          git -C OpenPDF checkout ${{ env.PIN_OPENPDF }}
       - name: Rust Nightly
         uses: actions-rs/toolchain@v1
         with:

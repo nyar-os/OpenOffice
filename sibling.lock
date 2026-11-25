@@ -1,0 +1,28 @@
+{
+  "description": "Pinned source combination for reproducible builds. CI checks out these exact SHAs instead of sibling dev tips. Verified by a clean-room `cargo metadata --locked` run; see documentation/README.md (Source ledger).",
+  "siblings": {
+    "OpenWord": {
+      "repo": "https://github.com/nyar-os/OpenWord",
+      "sha": "999c9df95e42791724016f9aec0223e4a4e29aeb"
+    },
+    "OpenExcel": {
+      "repo": "https://github.com/nyar-os/OpenExcel",
+      "sha": "83f58abdfa68dcf6ba881f19987bb7d1690bc26b"
+    },
+    "OpenPPT": {
+      "repo": "https://github.com/nyar-os/OpenPPT",
+      "sha": "5f0e915ec1740dc7aad2f73e717ebbe17d37e9b3"
+    },
+    "OpenPDF": {
+      "repo": "https://github.com/nyar-os/OpenPDF",
+      "sha": "afb4b1a67fb94acfeb5a2cae13689ddcbc754d52"
+    }
+  },
+  "boost": {
+    "source": "https://github.com/oovm/rust-boost",
+    "revisions": {
+      "ad76d3060dc8c0e219ba1016f88bf5ab905d48d9": "pinned by OpenWord, OpenExcel, OpenPPT and this host",
+      "d84299a951f16961ea24f51be711d0eef97ce491": "pinned by OpenPDF"
+    }
+  }
+}

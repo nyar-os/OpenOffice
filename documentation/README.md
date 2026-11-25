@@ -7,6 +7,7 @@ This repository builds `open-office`, a thin host over four sibling engine crate
 ```text
 OpenOffice/
 ├── Cargo.toml                       workspace; default members are sub_projects and office
+├── sibling.lock                     pinned sibling SHAs and rust-boost revisions (CI input)
 ├── projects/
 │   ├── crates/office/               open-office library and binary
 │   │   ├── src/lib.rs               routing, reports, conversion, verification
@@ -70,6 +71,28 @@ Treat the pin as one shared decision. When bumping it, update the revision in ev
 
 `Cargo.lock` is ignored by git in this repository, so use the lockfile locally to confirm which revisions the build actually selected.
 
+## Source ledger (clean-room, 2026-11-25)
+
+The pinned combination was rebuilt in a scratch directory outside this workspace: the five repositories were cloned fresh, checked out at the SHAs below, and `cargo metadata --locked --format-version 1` resolved the graph from the committed lockfile without network. This ledger is the provenance record the plan requires; `sibling.lock` is the machine-readable build input CI consumes.
+
+Host commit: `OpenOffice` @ `34242978aba447444ed01c850247534056bfb95d`.
+
+Engine crate path dependencies (resolved sibling SHA = checkout pinned in `sibling.lock`):
+
+| Engine crate | Path (relative to this repository's parent) | Resolved sibling SHA |
+|--------------|---------------------------------------------|----------------------|
+| `open-word-document` | `OpenWord/projects/crates/model` | `999c9df95e42791724016f9aec0223e4a4e29aeb` |
+| `open-excel-workbook` | `OpenExcel/projects/crates/model` | `83f58abdfa68dcf6ba881f19987bb7d1690bc26b` |
+| `open-ppt-deck` | `OpenPPT/projects/crates/deck` | `5f0e915ec1740dc7aad2f73e717ebbe17d37e9b3` |
+| `open-pdf-core` | `OpenPDF/projects/crates/pdf` | `afb4b1a67fb94acfeb5a2cae13689ddcbc754d52` |
+
+Boost git dependencies, resolved by full source URL and 40-character revision. Exactly two revisions appear in the graph, matching the pin table above:
+
+| Full source URL | Crates resolved from it |
+|-----------------|-------------------------|
+| `git+https://github.com/oovm/rust-boost?rev=ad76d3060dc8c0e219ba1016f88bf5ab905d48d9#ad76d3060dc8c0e219ba1016f88bf5ab905d48d9` | `boost-collection`, `boost-collection-macro`, `boost-console`, `boost-fs`, `boost-harness`, `boost-harness-macro`, `boost-math`, `boost-random`, `boost-source`, `data-binary-core`, `data-binary-docx`, `data-binary-ttf`, `data-binary-zip`, `data-checksum`, `data-compression`, `data-encoding`, `data-text-core`, `data-text-css-selector`, `data-text-csv`, `data-text-dsv`, `data-text-html`, `data-text-markdown`, `data-text-tex`, `data-text-xml`, `data-text-xpath`, `document-compose`, `document-fonts`, `document-formats`, `document-ir`, `document-layout`, `document-presentation`, `document-presentation-pdf`, `document-presentation-pptx`, `document-renderer`, `document-renderer-pdf`, `document-session`, `document-spreadsheet-formula`, `document-text`, `plotter-scene`, `plotter-types` |
+| `git+https://github.com/oovm/rust-boost?rev=d84299a951f16961ea24f51be711d0eef97ce491#d84299a951f16961ea24f51be711d0eef97ce491` | `boost-collection`, `boost-collection-macro`, `boost-console`, `boost-fs`, `boost-harness`, `boost-harness-macro`, `boost-math`, `boost-random`, `boost-source`, `data-binary-core`, `data-binary-pdf`, `data-checksum`, `data-compression`, `document-pdf`, `geometry-types`, `media-codec`, `media-image`, `media-types` |
+
 ## CI
 
 `.github/workflows/rust.yml` runs on pushes and pull requests to `master` and `dev`, across `ubuntu-latest`, `macos-latest` and `windows-latest`. It installs a nightly toolchain with the `rustfmt` and `clippy` components, then runs:
@@ -79,7 +102,7 @@ cargo build --release
 cargo test --release
 ```
 
-The workflow runs from the repository root and checks out only this repository. It has no steps that clone or place `OpenWord`, `OpenExcel`, `OpenPPT` and `OpenPDF` at the expected relative paths, so it assumes those checkouts already exist in the runner workspace. Add sibling checkout steps before relying on the workflow in a fresh CI environment. The workflow installs formatting and lint components but runs neither `cargo fmt --check` nor `cargo clippy`. Check formatting locally with `cargo fmt -p open-office -- --check`; clippy is not part of the checks described here.
+The workflow reads `sibling.lock` and checks out the four engines at those exact SHAs (not `dev` tips), then verifies the host manifest still pins the locked `rust-boost` revision, so every CI run builds the recorded combination from scratch. A pinned SHA must be reachable on the sibling's `dev` branch before this workflow can fetch it. The workflow installs formatting and lint components but runs neither `cargo fmt --check` nor `cargo clippy`. Check formatting locally with `cargo fmt -p open-office -- --check`; clippy is not part of the checks described here.
 
 ## Release and publishing
 
