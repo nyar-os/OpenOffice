@@ -919,22 +919,26 @@ impl Office {
     ///
     /// The request reaches the owning engine's own find-and-replace, so Word
     /// covers section titles, paragraphs, list items and table cells, workbooks
-    /// cover the text cells of every sheet that holds content, and presentations
-    /// cover slide text, table cells and speaker notes. Matching is
-    /// case-sensitive unless `ignore_case` is set, mirroring the suite's
-    /// case-sensitive `search`. A document with no match is reported with
-    /// `replaced: 0` and its file is left untouched; only a document that
-    /// changed is written back in its own format. With `dry_run` the engine
-    /// still counts matches, but `saved` stays null and the file on disk keeps
-    /// its bytes. PDF has no replacement route in this build.
+    /// cover the text cells of every sheet that holds content, presentations
+    /// cover slide text, table cells and speaker notes, and PDFs cover the text
+    /// runs their content streams address through a standard single-byte font
+    /// encoding. Matching is case-sensitive unless `ignore_case` is set,
+    /// mirroring the suite's case-sensitive `search`. A document with no match
+    /// is reported with `replaced: 0` and its file is left untouched; only a
+    /// document that changed is written back in its own format. With `dry_run`
+    /// the engine still counts matches, but `saved` stays null and the file on
+    /// disk keeps its bytes.
     ///
     /// `limit` caps per document for word files and per sheet for workbooks;
-    /// the presentation engine replaces every match, so a limited request on a
-    /// deck is refused with `unsupported-option` instead of being ignored. The
-    /// write-back goes to the same path the caller passed, so the caller must
-    /// own that file; exchange formats can drop engine-specific content and
-    /// each loss is reported under `saved.report`. Structured or scoped
-    /// replacement belongs to the owning product's SDK, not to this command.
+    /// the presentation and PDF engines replace every match they can address, so
+    /// a limited request on a deck or PDF is refused with `unsupported-option`
+    /// instead of being ignored. The PDF engine also refuses `ignore_case`: a
+    /// run is matched through the glyph codes of its own font, which carry no
+    /// case information the suite could fold. The write-back goes to the same
+    /// path the caller passed, so the caller must own that file; exchange
+    /// formats can drop engine-specific content and each loss is reported under
+    /// `saved.report`. Structured or scoped replacement belongs to the owning
+    /// product's SDK, not to this command.
     pub fn replace(&self, path: &Path, find: &str, with: &str, options: &ReplaceOptions) -> Result<Value, OfficeError> {
         if find.is_empty() {
             return Err(OfficeError::usage("`--find` needs a non-empty query").with_code("invalid-query"));
@@ -1064,11 +1068,42 @@ impl Office {
                 (replaced, revision, saved)
             }
             Kind::Pdf => {
-                return Err(OfficeError::usage(format!(
-                    "`replace` supports word documents, workbooks and presentations; {} has no find-and-replace route in this build",
-                    kind.label()
-                ))
-                .with_code("unsupported-target"));
+                if options.ignore_case {
+                    return Err(OfficeError::usage(
+                        "`--ignore-case` applies to word documents, workbooks and presentations; PDF runs are matched through the glyph codes of their own font",
+                    )
+                    .with_code("unsupported-option"));
+                }
+                if options.limit.is_some() {
+                    return Err(OfficeError::usage(
+                        "`--limit` applies to word documents and workbooks; the PDF engine rewrites every occurrence its fonts can address",
+                    )
+                    .with_code("unsupported-option"));
+                }
+                // The engine cannot write over its own input, and publishing a
+                // rebuilt document must not leave a half-written file behind:
+                // rebuild beside the target, then rename over it in one step.
+                let staging = staging_path(path);
+                let report = match open_pdf_core::replace_text(path, find, with, None, &staging, true) {
+                    Ok(report) => report,
+                    Err(error) => {
+                        let _ = std::fs::remove_file(&staging);
+                        return Err(engine(error));
+                    }
+                };
+                let replaced = report.get("replaced").and_then(Value::as_u64).unwrap_or_default();
+                if replaced == 0 || options.dry_run {
+                    let _ = std::fs::remove_file(&staging);
+                    (replaced, Value::Null, Value::Null)
+                }
+                else {
+                    std::fs::rename(&staging, path).map_err(|error| {
+                        let _ = std::fs::remove_file(&staging);
+                        OfficeError::runtime(format!("could not publish the rebuilt PDF at {}: {error}", path.display()))
+                            .with_code("io/write")
+                    })?;
+                    (replaced, Value::Null, json!({ "format": "pdf", "report": report }))
+                }
             }
         };
         Ok(json!({
@@ -2362,6 +2397,13 @@ fn engine(error: impl EngineFailure) -> OfficeError {
 /// suite through the same bridge.
 fn pdf_engine(error: impl Into<open_pdf_core::ServiceError>) -> OfficeError {
     engine(error.into())
+}
+
+/// The side-by-side path a rebuilt PDF is assembled at before it replaces the
+/// original, so a failed or empty rewrite never leaves a half-written file.
+fn staging_path(path: &Path) -> PathBuf {
+    let name = path.file_name().map(|value| value.to_string_lossy().into_owned()).unwrap_or_else(|| "document.pdf".to_owned());
+    path.with_file_name(format!(".{name}.replace-{}", std::process::id()))
 }
 
 /// The export route that writes a word document back under its own extension.

@@ -1486,6 +1486,28 @@ fn replace_dry_run_counts_matches_without_writing_any_family() {
     assert_eq!(report["saved"], Value::Null);
     assert_eq!(fs::read(&project).expect("read project bytes"), before);
 
+    let paper = dir.join("dry.pdf");
+    open_pdf_core::create(&open_pdf_core::CreateRequest {
+        out: paper.clone(),
+        pages: vec!["Alpha page".to_string()],
+        overwrite: true,
+        ..Default::default()
+    })
+    .expect("create pdf");
+    let before = fs::read(&paper).expect("read pdf bytes");
+    let report =
+        office.replace(&paper, "Alpha", "First", &ReplaceOptions { dry_run: true, ..Default::default() }).expect("pdf dry run");
+    assert_eq!(report["replaced"], json!(1));
+    assert_eq!(report["saved"], Value::Null);
+    assert_eq!(fs::read(&paper).expect("read pdf bytes"), before, "a PDF dry run publishes nothing");
+    let staged: Vec<_> = fs::read_dir(&dir)
+        .expect("read dir")
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().contains(".replace-"))
+        .collect();
+    assert!(staged.is_empty(), "the dry run must remove its staging file: {staged:?}");
+    assert_eq!(office.search(&paper, "Alpha page", None).expect("search")["hits"].as_array().unwrap().len(), 1);
+
     let word_before = fs::read(&word).expect("read word bytes");
     let batch = office
         .replace_many(&[word.clone(), workbook.clone()], "Acme", "Globex", &ReplaceOptions { dry_run: true, ..Default::default() })
@@ -1872,10 +1894,10 @@ fn concurrent_publish_contends_on_one_fresh_target() {
 ///
 /// Each fixture is built with the owning engine's minimal construction and
 /// exported under its exchange extension, then every later step goes through
-/// the suite facade only. PDFs have no in-place find-and-replace route in this
-/// build, so the deepest verified path for that family is asserted explicitly:
-/// the refusal, an engine-level bookmark edit read back through the suite, and
-/// a text round-trip (PDF → Markdown → edit → PDF) verified after reopening.
+/// the suite facade only. Every family, PDF included, is edited in place through
+/// the same `replace` route and verified by reopening: text that changed is
+/// found again, text that was not selected stays, and the metadata the rebuild
+/// preserves is re-read.
 #[test]
 fn single_binary_open_edit_save_reopen_across_four_families() {
     let office = Office::new();
@@ -1988,7 +2010,7 @@ fn single_binary_open_edit_save_reopen_across_four_families() {
     assert_eq!(outline["outline"]["slides"][0]["title"], json!("Plan"));
     assert_eq!(outline["outline"]["slides"][1]["title"], json!("Plan review"));
 
-    // --- PDF: no in-place find-and-replace route, so the deepest verified path is asserted.
+    // --- PDF: find-and-replace rewrites the content streams in place.
     let paper = dir.join("paper.pdf");
     let request = open_pdf_core::CreateRequest {
         out: paper.clone(),
@@ -2012,9 +2034,25 @@ fn single_binary_open_edit_save_reopen_across_four_families() {
     let metadata = office.metadata(&paper).expect("metadata pdf");
     assert_eq!(metadata["metadata"]["title"], json!("Quarterly"));
 
-    let refused = office.replace(&paper, "Alpha", "First", &ReplaceOptions::default()).expect_err("pdfs have no replace route");
-    assert_eq!(refused.code(), "unsupported-target");
-    assert!(refused.is_usage());
+    let rewritten = office.replace(&paper, "Alpha", "First", &ReplaceOptions::default()).expect("replace pdf text");
+    assert_eq!(rewritten["kind"], json!("pdf"));
+    assert_eq!(rewritten["replaced"], json!(1));
+    assert_eq!(rewritten["saved"]["format"], json!("pdf"));
+    assert_eq!(rewritten["saved"]["report"]["replaced"], json!(1));
+    assert_eq!(
+        office.search(&paper, "First page", None).expect("search rewritten pdf")["hits"].as_array().expect("hits").len(),
+        1
+    );
+    assert!(office.search(&paper, "Alpha page", None).expect("search stale pdf")["hits"].as_array().expect("hits").is_empty());
+    assert_eq!(office.metadata(&paper).expect("metadata after replace")["metadata"]["title"], json!("Quarterly"));
+    let refused = office
+        .replace(&paper, "First", "Primary", &ReplaceOptions { ignore_case: true, ..Default::default() })
+        .expect_err("PDF runs carry no case folding");
+    assert_eq!(refused.code(), "unsupported-option");
+    let refused = office
+        .replace(&paper, "First", "Primary", &ReplaceOptions { limit: Some(1), ..Default::default() })
+        .expect_err("PDF replaces every addressable occurrence");
+    assert_eq!(refused.code(), "unsupported-option");
 
     let marked = dir.join("marked.pdf");
     open_pdf_core::set_bookmarks(
@@ -2031,19 +2069,19 @@ fn single_binary_open_edit_save_reopen_across_four_families() {
     assert_eq!(outline["outline"]["bookmarks"][0]["title"], json!("Chapter One"));
     assert_eq!(outline["outline"]["bookmarks"][1]["title"], json!("Chapter Two"));
     assert_eq!(outline["outline"]["bookmarks"][1]["depth"], json!(2));
-    assert_eq!(office.search(&marked, "Alpha page", None).expect("search marked pdf")["hits"].as_array().expect("hits").len(), 1);
+    assert_eq!(office.search(&marked, "First page", None).expect("search marked pdf")["hits"].as_array().expect("hits").len(), 1);
 
     let extracted = dir.join("paper.md");
     office.convert(&paper, "md", &extracted, false).expect("pdf to markdown");
     let markdown = fs::read_to_string(&extracted).expect("read markdown");
-    assert!(markdown.contains("Alpha page") && markdown.contains("Beta page"), "both pages were extracted: {markdown}");
-    let report = office.replace(&extracted, "Alpha", "First", &ReplaceOptions::default()).expect("edit the projection");
+    assert!(markdown.contains("First page") && markdown.contains("Beta page"), "both pages were extracted: {markdown}");
+    let report = office.replace(&extracted, "Beta", "Second", &ReplaceOptions::default()).expect("edit the projection");
     assert_eq!(report["kind"], json!("word"));
     assert_eq!(report["replaced"], json!(1));
     let rebuilt = dir.join("rebuilt.pdf");
     office.convert(&extracted, "pdf", &rebuilt, false).expect("markdown back to pdf");
-    assert_eq!(office.search(&rebuilt, "First page", None).expect("search rebuilt")["hits"].as_array().expect("hits").len(), 1);
-    assert!(office.search(&rebuilt, "Alpha page", None).expect("search rebuilt stale")["hits"].as_array().expect("hits").is_empty());
+    assert_eq!(office.search(&rebuilt, "Second page", None).expect("search rebuilt")["hits"].as_array().expect("hits").len(), 1);
+    assert!(office.search(&rebuilt, "Beta page", None).expect("search rebuilt stale")["hits"].as_array().expect("hits").is_empty());
     let stats = office.stats(&rebuilt).expect("stats rebuilt");
     assert!(stats["stats"]["pages"].as_u64().expect("pages") >= 1, "the rebuilt PDF is a real paged document: {stats}");
 

@@ -625,6 +625,7 @@ fn usage() {
          \x20 open-office search a.docx b.pdf c.pptx --text total --limit 10\n\
          \x20 open-office replace notes.md --find Acme --with Globex\n\
          \x20 open-office replace a.docx b.xlsx --find invoice --with statement --ignore-case\n\
+         \x20 open-office replace paper.pdf --find Draft --with Final\n\
          \x20 open-office render budget.xlsx --out sheet.svg\n\
          \x20 open-office render deck.pptx --page 2 --out slide-2.svg\n\
          \x20 open-office render deck.pptx --pages 1,3-5 --out-dir preview/\n\
