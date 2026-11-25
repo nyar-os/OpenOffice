@@ -460,10 +460,10 @@ The crate resolves its engines as path dependencies on the four sibling working 
 
 | Repo | Resolved as | Revision |
 |------|-------------|----------|
-| `OpenWord` | path `../../../../OpenWord/projects/crates/model` | `4255d10` |
-| `OpenExcel` | path `../../../../OpenExcel/projects/crates/model` | `4c78415` |
-| `OpenPPT` | path `../../../../OpenPPT/projects/crates/deck` | `a4eaaf6` |
-| `OpenPDF` | path `../../../../OpenPDF/projects/crates/pdf` | `57b0a2a` |
+| `OpenWord` | path `../../../../OpenWord/projects/crates/model` | `ad76e2f` |
+| `OpenExcel` | path `../../../../OpenExcel/projects/crates/model` | `01639b5` |
+| `OpenPPT` | path `../../../../OpenPPT/projects/crates/deck` | `c3748ee` |
+| `OpenPDF` | path `../../../../OpenPDF/projects/crates/pdf` | `d4f5dce` |
 | `rust-boost` (all Boost crates, including `document-formats`, `document-pdf` and `media-codec`) | git `rev=7664fcbca34da7882ee7eecd69d185ee694110fc`, locked in `Cargo.lock` | `7664fcbc` |
 
 A clean rebuild compiles the four engine crates from the checkouts beside this repository and fetches the single Boost closure at its pinned revision, so the recorded revisions are the actual resolution sources, not a lockfile artifact. All five repositories pin the same Boost revision; bumping it here must move every sibling pin in the same change. CI reads `sibling.lock` and checks the sibling repositories out at the exact SHAs above, so CI and local builds resolve identically.

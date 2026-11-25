@@ -75,18 +75,18 @@ Treat the pin as one shared decision. When bumping it, update the revision in ev
 
 The pinned combination was re-verified on 2026-11-25 with `cargo metadata --locked --format-version 1` against the five sibling working trees checked out at the SHAs below: the graph resolves from the committed lockfile and now contains exactly one `rust-boost` revision. This ledger is the provenance record the plan requires; `sibling.lock` is the machine-readable build input CI consumes.
 
-Host commit: `OpenOffice` @ `4931304fc043ea5e05c19787ef71800e2b73eb21`.
+Host commit: `OpenOffice` @ `8dcc4897d7c7cadb10919e7aa579faf4256913d4`.
 
 Engine crate path dependencies (resolved sibling SHA = checkout pinned in `sibling.lock`):
 
 | Engine crate | Path (relative to this repository's parent) | Resolved sibling SHA |
 |--------------|---------------------------------------------|----------------------|
-| `open-word-document` | `OpenWord/projects/crates/model` | `4255d10ed1fa37a69bf1021c037c41f093364c1b` |
-| `open-excel-workbook` | `OpenExcel/projects/crates/model` | `4c78415ed1368ac8dc4ffe3923f1c27e7c3dd7dc` |
-| `open-ppt-deck` | `OpenPPT/projects/crates/deck` | `a4eaaf65ffe353e836d1e812ae8ac0e158859a07` |
-| `open-pdf-core` | `OpenPDF/projects/crates/pdf` | `57b0a2a59e7782d90527441f0a12f0aebe4ed8b6` |
+| `open-word-document` | `OpenWord/projects/crates/model` | `ad76e2f080b8f35bb53160f673a88b83a42cb6a3` |
+| `open-excel-workbook` | `OpenExcel/projects/crates/model` | `01639b5c04b80468dfea05154c42f2e33c674898` |
+| `open-ppt-deck` | `OpenPPT/projects/crates/deck` | `c3748ee06d07a5625ec519549c7ee7f13abd341a` |
+| `open-pdf-core` | `OpenPDF/projects/crates/pdf` | `d4f5dce395b833b616adf3174fa9e4744842d5e4` |
 
-The `OpenPDF` replacement gate is cleared. Its dev tip `afb4b1a` carries the typed error-contract change: the product surface owns a local `ServiceError` with `code`, `message` and `params` instead of re-exporting `document_pdf::ServiceError`. The host absorbed that contract — the `EngineFailure` adapter targets the product-surface type and forwards its typed parameters, and the shared `document-pdf` entry points that still report the upstream string error are lifted through the product surface's lossless `From` conversion, so codes and parameters survive routing unchanged. Its current dev tip `57b0a2a` adds the switch of page ordering and link extraction to the upstream `document-pdf` compose and links entry points, deleting the product-side split-and-merge workarounds, and exposes named destinations through `list_destinations`. The re-pointed combination was verified on the host with `cargo test --offline` against the sibling working trees at the SHAs above; the CI rebuild from `sibling.lock` is the clean-room proof.
+The `OpenPDF` replacement gate is cleared. Its dev tip `afb4b1a` carries the typed error-contract change: the product surface owns a local `ServiceError` with `code`, `message` and `params` instead of re-exporting `document_pdf::ServiceError`. The host absorbed that contract — the `EngineFailure` adapter targets the product-surface type and forwards its typed parameters, and the shared `document-pdf` entry points that still report the upstream string error are lifted through the product surface's lossless `From` conversion, so codes and parameters survive routing unchanged. Its current dev tip `d4f5dce` adds the switch of page ordering and link extraction to the upstream `document-pdf` compose and links entry points, deleting the product-side split-and-merge workarounds, and threads named destinations through `list_destinations`, the napi binding, the SDK and the CLI. The re-pointed combination was verified on the host with `cargo test --offline` against the sibling working trees at the SHAs above; the CI rebuild from `sibling.lock` is the clean-room proof.
 
 Boost git dependencies, resolved by full source URL and 40-character revision. Exactly one revision appears in the graph, matching the pin table above:
 

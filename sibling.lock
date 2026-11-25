@@ -3,19 +3,19 @@
   "siblings": {
     "OpenWord": {
       "repo": "https://github.com/nyar-os/OpenWord",
-      "sha": "4255d10ed1fa37a69bf1021c037c41f093364c1b"
+      "sha": "ad76e2f080b8f35bb53160f673a88b83a42cb6a3"
     },
     "OpenExcel": {
       "repo": "https://github.com/nyar-os/OpenExcel",
-      "sha": "4c78415ed1368ac8dc4ffe3923f1c27e7c3dd7dc"
+      "sha": "01639b5c04b80468dfea05154c42f2e33c674898"
     },
     "OpenPPT": {
       "repo": "https://github.com/nyar-os/OpenPPT",
-      "sha": "a4eaaf65ffe353e836d1e812ae8ac0e158859a07"
+      "sha": "c3748ee06d07a5625ec519549c7ee7f13abd341a"
     },
     "OpenPDF": {
       "repo": "https://github.com/nyar-os/OpenPDF",
-      "sha": "57b0a2a59e7782d90527441f0a12f0aebe4ed8b6"
+      "sha": "d4f5dce395b833b616adf3174fa9e4744842d5e4"
     }
   },
   "boost": {
