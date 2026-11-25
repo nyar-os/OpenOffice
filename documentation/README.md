@@ -84,7 +84,9 @@ Engine crate path dependencies (resolved sibling SHA = checkout pinned in `sibli
 | `open-word-document` | `OpenWord/projects/crates/model` | `999c9df95e42791724016f9aec0223e4a4e29aeb` |
 | `open-excel-workbook` | `OpenExcel/projects/crates/model` | `83f58abdfa68dcf6ba881f19987bb7d1690bc26b` |
 | `open-ppt-deck` | `OpenPPT/projects/crates/deck` | `5f0e915ec1740dc7aad2f73e717ebbe17d37e9b3` |
-| `open-pdf-core` | `OpenPDF/projects/crates/pdf` | `afb4b1a67fb94acfeb5a2cae13689ddcbc754d52` |
+| `open-pdf-core` | `OpenPDF/projects/crates/pdf` | `bfa096b73a4ec166bb75abd8083c0a691bd89809` |
+
+`OpenPDF` dev tips `afb4b1a` and later carry an unabsorbed error-contract change: its product surface stops re-exporting `document_pdf::ServiceError`, so the host's `EngineFailure` adapter no longer covers `inspect` and the pinned combination fails to compile. The ledger pins the signed-off baseline `bfa096b` instead; re-pointing to a newer `OpenPDF` SHA is gated on that repository shipping a host-compatible error surface.
 
 Boost git dependencies, resolved by full source URL and 40-character revision. Exactly two revisions appear in the graph, matching the pin table above:
 
