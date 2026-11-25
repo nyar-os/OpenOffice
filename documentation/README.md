@@ -81,12 +81,12 @@ Engine crate path dependencies (resolved sibling SHA = checkout pinned in `sibli
 
 | Engine crate | Path (relative to this repository's parent) | Resolved sibling SHA |
 |--------------|---------------------------------------------|----------------------|
-| `open-word-document` | `OpenWord/projects/crates/model` | `999c9df95e42791724016f9aec0223e4a4e29aeb` |
+| `open-word-document` | `OpenWord/projects/crates/model` | `440c2e46bd362b52f6b42c4f6a71f40b3b2884dd` |
 | `open-excel-workbook` | `OpenExcel/projects/crates/model` | `83f58abdfa68dcf6ba881f19987bb7d1690bc26b` |
-| `open-ppt-deck` | `OpenPPT/projects/crates/deck` | `5f0e915ec1740dc7aad2f73e717ebbe17d37e9b3` |
-| `open-pdf-core` | `OpenPDF/projects/crates/pdf` | `bfa096b73a4ec166bb75abd8083c0a691bd89809` |
+| `open-ppt-deck` | `OpenPPT/projects/crates/deck` | `1b92939e8095acd324647c6e9c3e72ade18b2ca0` |
+| `open-pdf-core` | `OpenPDF/projects/crates/pdf` | `afb4b1a67fb94acfeb5a2cae13689ddcbc754d52` |
 
-`OpenPDF` dev tips `afb4b1a` and later carry an unabsorbed error-contract change: its product surface stops re-exporting `document_pdf::ServiceError`, so the host's `EngineFailure` adapter no longer covers `inspect` and the pinned combination fails to compile. The ledger pins the signed-off baseline `bfa096b` instead; re-pointing to a newer `OpenPDF` SHA is gated on that repository shipping a host-compatible error surface.
+The `OpenPDF` replacement gate is cleared. Its dev tip `afb4b1a` carries the typed error-contract change: the product surface owns a local `ServiceError` with `code`, `message` and `params` instead of re-exporting `document_pdf::ServiceError`. The host absorbed that contract — the `EngineFailure` adapter targets the product-surface type and forwards its typed parameters, and the shared `document-pdf` entry points that still report the upstream string error are lifted through the product surface's lossless `From` conversion, so codes and parameters survive routing unchanged. The re-pointed combination was verified on the host with `cargo test --offline` against the sibling working trees at the SHAs above; the CI rebuild from `sibling.lock` is the clean-room proof.
 
 Boost git dependencies, resolved by full source URL and 40-character revision. Exactly two revisions appear in the graph, matching the pin table above:
 

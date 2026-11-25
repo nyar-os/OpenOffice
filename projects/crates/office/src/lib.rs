@@ -204,10 +204,11 @@ impl EngineFailure for open_pdf_core::ServiceError {
         self.message().to_owned()
     }
 
-    /// The PDF engine carries no typed parameters yet, so routing forwards
-    /// only its stable code and leaves `params` absent.
+    /// The PDF product surface now carries typed parameters beside the code,
+    /// so routing forwards them unchanged.
     fn stable_params(&self) -> Option<Value> {
-        None
+        let params = self.params();
+        (!params.is_null()).then(|| params.clone())
     }
 }
 
@@ -450,7 +451,7 @@ impl Office {
                 stats
             }
             Kind::Pdf => {
-                let report = open_pdf_core::inspect(path).map_err(engine)?;
+                let report = open_pdf_core::inspect(path).map_err(pdf_engine)?;
                 json!({
                     "pages": report.pages,
                     "version": report.version,
@@ -498,7 +499,7 @@ impl Office {
                 json!({ "title": summary.get("title").cloned().unwrap_or(Value::Null) })
             }
             Kind::Pdf => {
-                let report = open_pdf_core::inspect(path).map_err(engine)?;
+                let report = open_pdf_core::inspect(path).map_err(pdf_engine)?;
                 serde_json::to_value(&report.metadata).map_err(|error| OfficeError::runtime(error.to_string()))?
             }
         };
@@ -599,7 +600,7 @@ impl Office {
                 open_ppt_deck::outline::outline(&loaded.deck, &json!({ "points": points })).map_err(engine)?
             }
             Kind::Pdf => {
-                let report = open_pdf_core::inspect(path).map_err(engine)?;
+                let report = open_pdf_core::inspect(path).map_err(pdf_engine)?;
                 let mut bookmarks = serde_json::to_value(&report.bookmarks)
                     .map_err(|error| OfficeError::runtime(error.to_string()))?;
                 if let Some(depth) = depth
@@ -1374,7 +1375,7 @@ impl Office {
                 }))
             }
             Kind::Pdf => {
-                let report = open_pdf_core::inspect(path).map_err(engine)?;
+                let report = open_pdf_core::inspect(path).map_err(pdf_engine)?;
                 let report = serde_json::to_value(report).map_err(|error| OfficeError::runtime(error.to_string()))?;
                 Ok(json!({
                     "kind": kind.label(),
@@ -1706,7 +1707,7 @@ impl Office {
                 (summary.get("revision").cloned().unwrap_or(Value::Null), summary, json!(loaded.losses), json!([]))
             }
             Kind::Pdf => {
-                let report = open_pdf_core::inspect(path).map_err(engine)?;
+                let report = open_pdf_core::inspect(path).map_err(pdf_engine)?;
                 (
                     Value::Null,
                     json!({ "version": report.version, "pages": report.pages, "encrypted": report.encrypted }),
@@ -1810,7 +1811,7 @@ impl Office {
                 ("text", json!(loaded.losses))
             }
             Kind::Pdf => {
-                let report = open_pdf_core::extract_text(path).map_err(engine)?;
+                let report = open_pdf_core::extract_text(path).map_err(pdf_engine)?;
                 publish_output(out, report.markdown.as_bytes(), overwrite, "output-unwritable")?;
                 ("markdown", json!(report.losses))
             }
@@ -2022,7 +2023,7 @@ pub fn presentation_hits(document: &Value, query: &str, limit: usize) -> (Vec<Va
 
 /// Finds one query in a PDF's extracted Markdown, one hit per matching line.
 fn pdf_search(path: &Path, query: &str, limit: usize) -> Result<(Vec<Value>, bool, Vec<Value>), OfficeError> {
-    let report = open_pdf_core::extract_text(path).map_err(engine)?;
+    let report = open_pdf_core::extract_text(path).map_err(pdf_engine)?;
     let mut hits = Vec::new();
     for (index, line) in report.markdown.lines().enumerate() {
         if hits.len() >= limit {
@@ -2183,7 +2184,7 @@ fn extract_pdf_text(input: &Path, out: &Path, pages: Option<&str>, overwrite: bo
             let (report, selected) = extract_pdf_pages(input, ranges)?;
             (report, Some((ranges, selected)))
         }
-        None => (open_pdf_core::extract_text(input).map_err(engine)?, None),
+        None => (open_pdf_core::extract_text(input).map_err(pdf_engine)?, None),
     };
     publish_output(out, report.markdown.as_bytes(), overwrite, "output-unwritable")?;
     let mut summary = json!({
@@ -2202,16 +2203,16 @@ fn extract_pdf_text(input: &Path, out: &Path, pages: Option<&str>, overwrite: bo
 
 /// Extracts only the selected pages by arranging the source into a temporary PDF first.
 fn extract_pdf_pages(input: &Path, ranges: &str) -> Result<(open_pdf_core::ExtractReport, Vec<usize>), OfficeError> {
-    let info = open_pdf_core::inspect(input).map_err(engine)?;
+    let info = open_pdf_core::inspect(input).map_err(pdf_engine)?;
     let selected = parse_page_ranges(ranges, info.pages)?;
     if selected.len() == info.pages && selected.iter().copied().eq(1..=info.pages) {
-        return Ok((open_pdf_core::extract_text(input).map_err(engine)?, selected));
+        return Ok((open_pdf_core::extract_text(input).map_err(pdf_engine)?, selected));
     }
     let remove = (1..=info.pages).filter(|page| !selected.contains(page)).collect::<Vec<_>>();
     let temporary = temporary_pdf_path();
     let request = open_pdf_core::DocumentArrange { order: Some(selected.clone()), rotate: None, remove: Some(remove) };
-    open_pdf_core::arrange(input, &temporary, &request).map_err(engine)?;
-    let extracted = open_pdf_core::extract_text(&temporary).map_err(engine);
+    open_pdf_core::arrange(input, &temporary, &request).map_err(pdf_engine)?;
+    let extracted = open_pdf_core::extract_text(&temporary).map_err(pdf_engine);
     let _ = fs::remove_file(&temporary);
     Ok((extracted?, selected))
 }
@@ -2331,6 +2332,16 @@ fn engine(error: impl EngineFailure) -> OfficeError {
         code: error.stable_code().to_owned(),
         params: error.stable_params(),
     }
+}
+
+/// Wraps a PDF failure, lifting the upstream error into the product-surface type.
+///
+/// The shared `document-pdf` entry points still report the upstream string
+/// error, while the product surface owns the typed `ServiceError`; the product
+/// type converts from the upstream one losslessly, so both shapes reach the
+/// suite through the same bridge.
+fn pdf_engine(error: impl Into<open_pdf_core::ServiceError>) -> OfficeError {
+    engine(error.into())
 }
 
 /// The export route that writes a word document back under its own extension.
