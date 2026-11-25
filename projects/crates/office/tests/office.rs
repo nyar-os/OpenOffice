@@ -1766,3 +1766,75 @@ fn routed_engine_failures_keep_the_engine_stable_code_and_params() {
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn publish_refuses_existing_target_and_leaves_it_untouched() {
+    let dir = std::env::temp_dir().join(format!("open-office-publish-refuse-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let target = dir.join("page-1.svg");
+    fs::write(&target, b"<svg>old</svg>").expect("seed target");
+
+    let error = publish_output(&target, b"<svg>new</svg>", false, "unwritable").expect_err("a same-name target is refused");
+    assert_eq!(error.code(), "target-exists");
+    assert_eq!(fs::read(&target).expect("read back"), b"<svg>old</svg>", "the refused publish must not touch the target");
+    let entries: Vec<PathBuf> = fs::read_dir(&dir).expect("read dir").map(|entry| entry.expect("entry").path()).collect();
+    assert_eq!(entries, vec![target.clone()], "no staging file survives a refused publish");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn publish_replaces_existing_target_when_overwrite_is_allowed() {
+    let dir = std::env::temp_dir().join(format!("open-office-publish-replace-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let target = dir.join("notes.txt");
+    fs::write(&target, b"old text").expect("seed target");
+
+    publish_output(&target, b"new text", true, "output-unwritable").expect("overwrite publish");
+    assert_eq!(fs::read(&target).expect("read back"), b"new text");
+    let entries: Vec<PathBuf> = fs::read_dir(&dir).expect("read dir").map(|entry| entry.expect("entry").path()).collect();
+    assert_eq!(entries, vec![target.clone()], "the rename leaves no staging file behind");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn abandoned_publish_leaves_no_partial_file() {
+    let dir = std::env::temp_dir().join(format!("open-office-publish-abandon-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let target = dir.join("page-2.svg");
+    {
+        let mut publisher = boost_fs::AtomicPublisher::create(&target, boost_fs::PublishOptions::default()).expect("stage the file");
+        {
+            use std::io::Write;
+            publisher.write_all(b"<svg>half written").expect("stage bytes");
+        }
+        assert!(publisher.staging_path().exists(), "the staging file lives while publishing");
+    } // dropped without committing
+
+    assert!(!target.exists(), "an uncommitted publish never reaches the destination");
+    assert_eq!(fs::read_dir(&dir).expect("read dir").count(), 0, "the staging file is removed on failure");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn concurrent_publish_contends_on_one_fresh_target() {
+    let dir = std::env::temp_dir().join(format!("open-office-publish-contend-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let first = dir.join("shared.md");
+    let second = first.clone();
+
+    let winner = std::thread::spawn(move || publish_output(&first, b"first-payload", false, "unwritable"));
+    let loser = std::thread::spawn(move || publish_output(&second, b"second-payload", false, "unwritable"));
+    let outcomes = [winner.join().expect("thread"), loser.join().expect("thread")];
+
+    assert_eq!(outcomes.iter().filter(|outcome| outcome.is_ok()).count(), 1, "exactly one publisher claims a fresh same-name target");
+    let refused = outcomes.iter().find(|outcome| outcome.is_err()).expect("one publish refused");
+    assert_eq!(refused.as_ref().err().expect("error").code(), "target-exists");
+    let bytes = fs::read(&dir.join("shared.md")).expect("winner bytes");
+    assert!(bytes == b"first-payload" || bytes == b"second-payload", "the winner file is complete, never mixed");
+    assert_eq!(fs::read_dir(&dir).expect("read dir").count(), 1, "the loser leaves no staging file");
+
+    let _ = fs::remove_dir_all(&dir);
+}

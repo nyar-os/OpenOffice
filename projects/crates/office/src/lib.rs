@@ -1454,7 +1454,7 @@ impl Office {
                 )
                 .map_err(engine)?
             }
-            Kind::Pdf => extract_pdf_text(input, out, options.pages.as_deref())?,
+            Kind::Pdf => extract_pdf_text(input, out, options.pages.as_deref(), overwrite)?,
         };
         Ok(json!({
             "source": input.display().to_string(),
@@ -1806,14 +1806,12 @@ impl Office {
             Kind::Presentation => {
                 let loaded = load_deck(path)?;
                 let text = deck_text(&loaded.deck)?;
-                fs::write(out, text.as_bytes())
-                    .map_err(|error| OfficeError::runtime(format!("cannot write {}: {error}", out.display())).with_code("output-unwritable"))?;
+                publish_output(out, text.as_bytes(), overwrite, "output-unwritable")?;
                 ("text", json!(loaded.losses))
             }
             Kind::Pdf => {
                 let report = open_pdf_core::extract_text(path).map_err(engine)?;
-                fs::write(out, report.markdown.as_bytes())
-                    .map_err(|error| OfficeError::runtime(format!("cannot write {}: {error}", out.display())).with_code("output-unwritable"))?;
+                publish_output(out, report.markdown.as_bytes(), overwrite, "output-unwritable")?;
                 ("markdown", json!(report.losses))
             }
         };
@@ -2179,7 +2177,7 @@ fn deck_text(deck: &open_ppt_deck::EditableDeck) -> Result<String, OfficeError> 
 }
 
 /// Writes the extracted Markdown projection of a PDF to a text target.
-fn extract_pdf_text(input: &Path, out: &Path, pages: Option<&str>) -> Result<Value, OfficeError> {
+fn extract_pdf_text(input: &Path, out: &Path, pages: Option<&str>, overwrite: bool) -> Result<Value, OfficeError> {
     let (report, selection) = match pages {
         Some(ranges) => {
             let (report, selected) = extract_pdf_pages(input, ranges)?;
@@ -2187,8 +2185,7 @@ fn extract_pdf_text(input: &Path, out: &Path, pages: Option<&str>) -> Result<Val
         }
         None => (open_pdf_core::extract_text(input).map_err(engine)?, None),
     };
-    fs::write(out, report.markdown.as_bytes())
-        .map_err(|error| OfficeError::runtime(format!("cannot write {}: {error}", out.display())).with_code("output-unwritable"))?;
+    publish_output(out, report.markdown.as_bytes(), overwrite, "output-unwritable")?;
     let mut summary = json!({
         "bytes": report.markdown.len(),
         "losses": report.losses,
@@ -2302,8 +2299,28 @@ fn write_svg(path: &Path, page: &Value, overwrite: bool) -> Result<(), OfficeErr
         .get("svg")
         .and_then(Value::as_str)
         .ok_or_else(|| OfficeError::runtime("the engine returned no SVG for this page"))?;
-    fs::write(path, svg)
-        .map_err(|error| OfficeError::runtime(format!("cannot write {}: {error}", path.display())).with_code("unwritable"))
+    publish_output(path, svg.as_bytes(), overwrite, "unwritable")
+}
+
+/// Publishes output bytes atomically through `boost-fs`.
+///
+/// Bytes are staged in a sibling temporary file and linked or renamed into place, so a reader sees
+/// either the previous file or the complete new one, never a partial write. Without `overwrite` an
+/// existing target is refused even if it appeared after the caller's own existence check; a failure
+/// before the destination is published removes the staging file.
+#[doc(hidden)]
+pub fn publish_output(path: &Path, bytes: &[u8], overwrite: bool, code: &str) -> Result<(), OfficeError> {
+    let options = boost_fs::PublishOptions {
+        overwrite: if overwrite { boost_fs::OverwritePolicy::Replace } else { boost_fs::OverwritePolicy::RefuseExisting },
+        ..Default::default()
+    };
+    boost_fs::publish_bytes_with_options(path, bytes, options).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::AlreadyExists {
+            OfficeError::runtime(format!("{} already exists; pass --overwrite to replace it", path.display())).with_code("target-exists")
+        } else {
+            OfficeError::runtime(format!("cannot write {}: {error}", path.display())).with_code(code)
+        }
+    })
 }
 
 /// Wraps an engine failure, keeping its stable code and typed parameters.
