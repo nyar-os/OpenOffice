@@ -61,13 +61,13 @@ Current pins:
 
 | Repository | `rust-boost` revision |
 |------------|-----------------------|
-| `OpenOffice` (host) | `0ece26c987992326cfb768934183e99ae473a118` |
-| `OpenWord` | `0ece26c987992326cfb768934183e99ae473a118` |
-| `OpenExcel` | `0ece26c987992326cfb768934183e99ae473a118` |
-| `OpenPPT` | `0ece26c987992326cfb768934183e99ae473a118` |
-| `OpenPDF` | `0ece26c987992326cfb768934183e99ae473a118` |
+| `OpenOffice` (host) | `e727187d8c47eda1833f3a63c6528dc463a10ab7` |
+| `OpenWord` | `e727187d8c47eda1833f3a63c6528dc463a10ab7` |
+| `OpenExcel` | `e727187d8c47eda1833f3a63c6528dc463a10ab7` |
+| `OpenPPT` | `e727187d8c47eda1833f3a63c6528dc463a10ab7` |
+| `OpenPDF` | `e727187d8c47eda1833f3a63c6528dc463a10ab7` |
 
-Treat the pin as one shared decision. When bumping it, update the revision in every consumer that is being moved in the same change, then regenerate the lockfile. Leaving one repository on an older revision puts two `rust-boost` source trees in the graph: build time grows and shared types can exist twice, which is exactly the duplication this host is meant to avoid. The coordinated five-repo bump landed on 2026-11-25: this host and all four engines now pin the same revision `0ece26c9`, so the graph carries a single `rust-boost` tree again.
+Treat the pin as one shared decision. When bumping it, update the revision in every consumer that is being moved in the same change, then regenerate the lockfile. Leaving one repository on an older revision puts two `rust-boost` source trees in the graph: build time grows and shared types can exist twice, which is exactly the duplication this host is meant to avoid. The coordinated five-repo bump landed on 2026-11-25: this host and all four engines now pin the same revision `e727187d`, so the graph carries a single `rust-boost` tree again. That revision adds the PDF content-stream text replacement the host and `OpenPDF` consume.
 
 `Cargo.lock` is ignored by git in this repository, so use the lockfile locally to confirm which revisions the build actually selected.
 
@@ -101,6 +101,10 @@ Boost git dependencies, resolved by full source URL and 40-character revision. A
 ### Convergence re-verification (2026-11-25 19:20 +08:00)
 
 The coordinated five-repo bump closed the duplication recorded above. All five repositories now pin the single `rust-boost` revision `0ece26c987992326cfb768934183e99ae473a118`, and `sibling.lock` has been re-pointed to the engine tips that carry it: `OpenWord` `00915a8b9d0d0d1e02fd132907cbb21245683fa5`, `OpenExcel` `5a426d2d5529b41ec31a56b096729ad915694511`, `OpenPPT` `fa688060ee5d69dd84cf8cc8f280c2dd1bb0c635`, `OpenPDF` `bab32d52309dd266ece2af30df878d80d69c1242`. Each engine ran its full `cargo test --workspace` green at the unified revision (OpenWord 91, OpenExcel 125, OpenPPT 79, OpenPDF 78 + 54 TypeScript), and this host passed 64 tests (63 in `tests/office.rs`, 1 in `sub_projects`) on the same revision, so one `rust-boost` tree now serves the host and all four engines. Since the 17:39 ledger the engines also landed the batches this host consumes: PDF gained upstream outline entries with page resolution, `compose_with_title`, per-part split fidelity and a frozen error-parameter contract; PPT gained slide-level and table/shape editing with a frozen error-parameter contract that Excel, Word, PDF and this host each mirror in their own domains; Word gained the non-nested list operations and a frozen document error contract; Excel gained style/defined-name fidelity plus a frozen workbook error contract. The five-revision tables above remain the historical record of the 17:39 state.
+
+### PDF text-replacement bump (2026-11-25 21:01 +08:00)
+
+A second coordinated bump moved all five repositories to `rust-boost` `e727187d8c47eda1833f3a63c6528dc463a10ab7` and `sibling.lock` to the engine tips that carry it: `OpenWord` `20b6b9a539d81464093fe442bf583b24316c02f5`, `OpenExcel` `4fb7d2cd1e7ef30916ee48166b574834add7860b`, `OpenPPT` `6a2a8cc49ac436f57269b73b623519029fd313ec`, `OpenPDF` `dfc4042cd34cf010a9d05bbccf8d575f582f5671`. The revision exists because the PDF engine had no text editing at all: `document.pdf` now rewrites string operands of `Tj`, `TJ`, `'` and `"` when the active font uses a standard single-byte encoding, reports every run it cannot address under a stable code (`font-encoding-unsupported`, `text-split-across-runs`, `content-filter-unsupported`, `text-in-form-xobject`, …), and reports the catalog entries the rebuild cannot carry under `fidelity`, so a rewrite never silently drops outlines, an AcroForm or named destinations. `OpenPDF` exposes it as `replaceText` (Rust, napi, SDK and `replace-text` CLI) and the host routes its `replace` PDF branch through it, rebuilding beside the target and renaming over it so a failed or empty rewrite leaves no half-written file. The full `cargo test --workspace` is green at the unified revision: OpenWord 91, OpenExcel 125, OpenPPT 79, OpenPDF 78 Rust + 57 TypeScript (1 skipped without the addon), and this host 64 (63 in `tests/office.rs`, 1 in `sub_projects`).
 
 ## CI
 

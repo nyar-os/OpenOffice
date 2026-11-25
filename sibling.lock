@@ -3,25 +3,25 @@
   "siblings": {
     "OpenWord": {
       "repo": "https://github.com/nyar-os/OpenWord",
-      "sha": "00915a8b9d0d0d1e02fd132907cbb21245683fa5"
+      "sha": "20b6b9a539d81464093fe442bf583b24316c02f5"
     },
     "OpenExcel": {
       "repo": "https://github.com/nyar-os/OpenExcel",
-      "sha": "5a426d2d5529b41ec31a56b096729ad915694511"
+      "sha": "4fb7d2cd1e7ef30916ee48166b574834add7860b"
     },
     "OpenPPT": {
       "repo": "https://github.com/nyar-os/OpenPPT",
-      "sha": "fa688060ee5d69dd84cf8cc8f280c2dd1bb0c635"
+      "sha": "6a2a8cc49ac436f57269b73b623519029fd313ec"
     },
     "OpenPDF": {
       "repo": "https://github.com/nyar-os/OpenPDF",
-      "sha": "bab32d52309dd266ece2af30df878d80d69c1242"
+      "sha": "dfc4042cd34cf010a9d05bbccf8d575f582f5671"
     }
   },
   "boost": {
     "source": "https://github.com/oovm/rust-boost",
     "revisions": {
-      "0ece26c987992326cfb768934183e99ae473a118": "pinned by this host and all four engines after the coordinated five-repo bump on 2026-11-25"
+      "e727187d8c47eda1833f3a63c6528dc463a10ab7": "pinned by this host and all four engines after the PDF text-replacement bump on 2026-11-25"
     }
   }
 }
