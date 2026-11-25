@@ -159,9 +159,10 @@ impl EngineFailure for open_word_document::ServiceError {
         self.message().to_owned()
     }
 
+    /// The word engine stores the shared `document_ir` frozen payload, so its
+    /// typed parameters serialize directly instead of being derived from text.
     fn stable_params(&self) -> Option<Value> {
-        let params = self.params();
-        (!params.is_null()).then(|| params.clone())
+        frozen_params(&self.params().to_json())
     }
 }
 
@@ -174,9 +175,10 @@ impl EngineFailure for open_excel_workbook::ServiceError {
         self.message().to_owned()
     }
 
+    /// The workbook engine stores the shared formula frozen payload, so its
+    /// typed parameters serialize directly instead of being derived from text.
     fn stable_params(&self) -> Option<Value> {
-        let params = self.params();
-        (!params.is_null()).then(|| params.clone())
+        frozen_params(&self.params().to_json())
     }
 }
 
@@ -190,8 +192,7 @@ impl EngineFailure for open_ppt_deck::ServiceError {
     }
 
     fn stable_params(&self) -> Option<Value> {
-        let params = self.params();
-        (!params.is_null()).then(|| params.clone())
+        frozen_params(self.params())
     }
 }
 
@@ -205,11 +206,19 @@ impl EngineFailure for open_pdf_core::ServiceError {
     }
 
     /// The PDF product surface now carries typed parameters beside the code,
-    /// so routing forwards them unchanged.
+    /// so routing forwards their frozen object unchanged.
     fn stable_params(&self) -> Option<Value> {
-        let params = self.params();
-        (!params.is_null()).then(|| params.clone())
+        frozen_params(self.params())
     }
+}
+
+/// Accepts only the frozen object payload an engine attaches to its code.
+///
+/// Every engine publishes parameters as a JSON object whose keys are fixed per
+/// code; `null`, arrays and scalars are not a frozen payload, so the suite drops
+/// them instead of forwarding a half-shaped value into a report.
+fn frozen_params(params: &Value) -> Option<Value> {
+    params.as_object().map(|_| params.clone())
 }
 
 impl fmt::Display for OfficeError {
@@ -2324,14 +2333,25 @@ pub fn publish_output(path: &Path, bytes: &[u8], overwrite: bool, code: &str) ->
     })
 }
 
-/// Wraps an engine failure, keeping its stable code and typed parameters.
-fn engine(error: impl EngineFailure) -> OfficeError {
+/// Projects an engine failure onto the suite envelope.
+///
+/// The suite owns the envelope and the localized copy of its own guardrails;
+/// the engine's stable code and frozen parameters pass through unchanged. The
+/// message is display-only, so replacing it never changes the machine branch or
+/// the parameters a caller receives.
+#[doc(hidden)]
+pub fn project_engine_failure(code: &str, message: impl Into<String>, params: Option<Value>) -> OfficeError {
     OfficeError {
-        message: error.stable_message(),
+        message: message.into(),
         usage: false,
-        code: error.stable_code().to_owned(),
-        params: error.stable_params(),
+        code: code.to_owned(),
+        params: params.as_ref().and_then(frozen_params),
     }
+}
+
+/// Wraps an engine failure, keeping its stable code and frozen parameters.
+fn engine(error: impl EngineFailure) -> OfficeError {
+    project_engine_failure(error.stable_code(), error.stable_message(), error.stable_params())
 }
 
 /// Wraps a PDF failure, lifting the upstream error into the product-surface type.
