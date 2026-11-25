@@ -464,9 +464,10 @@ The crate resolves its engines as path dependencies on the four sibling working 
 | `OpenExcel` | path `../../../../OpenExcel/projects/crates/model` | `01639b5` |
 | `OpenPPT` | path `../../../../OpenPPT/projects/crates/deck` | `c3748ee` |
 | `OpenPDF` | path `../../../../OpenPDF/projects/crates/pdf` | `d4f5dce` |
-| `rust-boost` (all Boost crates, including `document-formats`, `document-pdf` and `media-codec`) | git `rev=7664fcbca34da7882ee7eecd69d185ee694110fc`, locked in `Cargo.lock` | `7664fcbc` |
+| `rust-boost` (Boost closure of this host, `OpenWord`, `OpenExcel` and `OpenPDF`, including `document-formats`, `document-pdf` and `media-codec`) | git `rev=7664fcbca34da7882ee7eecd69d185ee694110fc`, locked in `Cargo.lock` | `7664fcbc` |
+| `rust-boost` (`OpenPPT`'s own pin at `c3748ee`, covering `document-presentation*`, `document-compose`, `plotter-*` and friends) | git `rev=9fd602b93a9a456da4ba824e22c90b600f12fdf0`, locked in `Cargo.lock` | `9fd602b9` |
 
-A clean rebuild compiles the four engine crates from the checkouts beside this repository and fetches the single Boost closure at its pinned revision, so the recorded revisions are the actual resolution sources, not a lockfile artifact. All five repositories pin the same Boost revision; bumping it here must move every sibling pin in the same change. CI reads `sibling.lock` and checks the sibling repositories out at the exact SHAs above, so CI and local builds resolve identically.
+A clean rebuild compiles the four engine crates from the checkouts beside this repository and fetches the Boost closures at their pinned revisions, so the recorded revisions are the actual resolution sources, not a lockfile artifact. `OpenPPT` moved its Boost pin forward to the descendant `9fd602b9` on 2026-11-25, so the graph currently carries two Boost trees with 23 duplicated crate names; the combination builds and tests clean and the duplication is tracked for a coordinated five-repo bump. CI reads `sibling.lock` and checks the sibling repositories out at the exact SHAs above, so CI and local builds resolve identically.
 
 ## Guardrails
 
