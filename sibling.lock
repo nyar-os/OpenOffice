@@ -21,7 +21,8 @@
   "boost": {
     "source": "https://github.com/oovm/rust-boost",
     "revisions": {
-      "7664fcbca34da7882ee7eecd69d185ee694110fc": "pinned by OpenWord, OpenExcel, OpenPPT, OpenPDF and this host"
+      "7664fcbca34da7882ee7eecd69d185ee694110fc": "pinned by this host, OpenWord, OpenExcel and OpenPDF",
+      "9fd602b93a9a456da4ba824e22c90b600f12fdf0": "pinned by OpenPPT at dev tip c3748ee, a descendant of 7664fcbc; recorded as fact until a coordinated five-repo bump"
     }
   }
 }
