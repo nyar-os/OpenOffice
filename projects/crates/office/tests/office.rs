@@ -1838,3 +1838,186 @@ fn concurrent_publish_contends_on_one_fresh_target() {
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// S4 suite acceptance: one `Office` instance (the single binary) opens, edits,
+/// saves and re-verifies a real DOCX, XLSX, PPTX and PDF inside one process.
+///
+/// Each fixture is built with the owning engine's minimal construction and
+/// exported under its exchange extension, then every later step goes through
+/// the suite facade only. PDFs have no in-place find-and-replace route in this
+/// build, so the deepest verified path for that family is asserted explicitly:
+/// the refusal, an engine-level bookmark edit read back through the suite, and
+/// a text round-trip (PDF → Markdown → edit → PDF) verified after reopening.
+#[test]
+fn single_binary_open_edit_save_reopen_across_four_families() {
+    let office = Office::new();
+    let dir = std::env::temp_dir().join(format!("open-office-single-binary-four-families-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("temp dir");
+
+    // --- DOCX: build once through the word engine, then live entirely in the suite.
+    let created = open_word_document::create(&json!({ "title": "Quarterly" })).expect("create word");
+    let handle = handle_of(&created).expect("word handle");
+    open_word_document::edit(
+        handle,
+        &json!({ "operations": [
+            { "type": "heading.append", "level": 1, "text": "Overview" },
+            { "type": "paragraph.append", "text": "Acme Corp delivered record revenue." },
+        ] }),
+    )
+    .expect("seed word");
+    let docx = dir.join("quarterly.docx");
+    open_word_document::export(handle, "docx", &docx, true).expect("export docx");
+    let _ = open_word_document::close(handle);
+
+    let route = office.open(&docx, true).expect("route docx");
+    assert_eq!(route["kind"], json!("word"));
+    let probe = office.probe(&docx).expect("probe docx");
+    assert_eq!(probe["format"], json!("docx"), "the package part identifies the Word package");
+    assert_eq!(probe["container"], json!("zip"));
+    assert_eq!(probe["confidence"], json!("verified"));
+    let opened = office.validate(&docx).expect("validate docx");
+    assert_eq!(opened["readable"], json!(true));
+    assert_eq!(office.search(&docx, "Acme", None).expect("search before")["hits"].as_array().expect("hits").len(), 1);
+
+    let report = office.replace(&docx, "Acme", "Globex", &ReplaceOptions::default()).expect("replace docx");
+    assert_eq!(report["kind"], json!("word"));
+    assert_eq!(report["replaced"], json!(1));
+    assert_eq!(report["saved"]["format"], json!("docx"), "the edit is written back under the same extension");
+
+    assert_eq!(office.search(&docx, "Globex", None).expect("search after")["hits"].as_array().expect("hits").len(), 1);
+    assert!(office.search(&docx, "Acme", None).expect("search stale")["hits"].as_array().expect("hits").is_empty());
+    let outline = office.outline(&docx, false, None).expect("outline docx");
+    assert_eq!(outline["outline"]["items"][0]["title"], json!("Overview"));
+    let stats = office.stats(&docx).expect("stats docx");
+    assert_eq!(stats["kind"], json!("word"));
+
+    // --- XLSX: the workbook engine seeds cells, the suite edits the package.
+    let created = open_excel_workbook::create(&json!({ "title": "Budget" })).expect("create workbook");
+    let handle = handle_of(&created).expect("workbook handle");
+    open_excel_workbook::edit(
+        handle,
+        &json!({ "operations": [
+            { "op": "cell.set", "sheet": "Sheet1", "reference": "A1", "value": "Item" },
+            { "op": "cell.set", "sheet": "Sheet1", "reference": "B1", "value": "Widget cost" },
+            { "op": "cell.set", "sheet": "Sheet1", "reference": "B2", "value": "Two Widgets" },
+        ] }),
+    )
+    .expect("seed workbook");
+    let xlsx = dir.join("budget.xlsx");
+    open_excel_workbook::export(handle, "xlsx", &xlsx, true).expect("export xlsx");
+    let _ = open_excel_workbook::close(handle);
+
+    let route = office.open(&xlsx, true).expect("route xlsx");
+    assert_eq!(route["kind"], json!("excel"));
+    let probe = office.probe(&xlsx).expect("probe xlsx");
+    assert_eq!(probe["format"], json!("xlsx"));
+    assert_eq!(probe["container"], json!("zip"));
+    assert_eq!(probe["confidence"], json!("verified"));
+    let opened = office.validate(&xlsx).expect("validate xlsx");
+    assert_eq!(opened["readable"], json!(true));
+    assert_eq!(office.search(&xlsx, "Widget", None).expect("search before")["hits"].as_array().expect("hits").len(), 2);
+
+    let report = office.replace(&xlsx, "Widget", "Gadget", &ReplaceOptions::default()).expect("replace xlsx");
+    assert_eq!(report["kind"], json!("excel"));
+    assert_eq!(report["replaced"], json!(2));
+    assert_eq!(report["saved"]["format"], json!("xlsx"));
+
+    assert_eq!(office.search(&xlsx, "Gadget", None).expect("search after")["hits"].as_array().expect("hits").len(), 2);
+    assert!(office.search(&xlsx, "Widget", None).expect("search stale")["hits"].as_array().expect("hits").is_empty());
+    let outline = office.outline(&xlsx, false, None).expect("outline xlsx");
+    assert_eq!(outline["outline"]["sheets"][0]["name"], json!("Sheet1"));
+
+    // --- PPTX: the deck engine authors slides, the suite edits the package.
+    let deck = open_ppt_deck::create(open_ppt_deck::CreateRequest {
+        title: Some("Roadmap".to_owned()),
+        size: None,
+        theme: None,
+        slides: vec!["Roadmap".to_owned(), "Roadmap review".to_owned()],
+    })
+    .expect("create deck");
+    let pptx = dir.join("roadmap.pptx");
+    open_ppt_deck::export(&deck, &json!({ "format": "pptx", "target": pptx.display().to_string(), "overwrite": true }))
+        .expect("export pptx");
+
+    let route = office.open(&pptx, true).expect("route pptx");
+    assert_eq!(route["kind"], json!("presentation"));
+    let probe = office.probe(&pptx).expect("probe pptx");
+    assert_eq!(probe["format"], json!("pptx"));
+    assert_eq!(probe["container"], json!("zip"));
+    assert_eq!(probe["confidence"], json!("verified"));
+    let opened = office.validate(&pptx).expect("validate pptx");
+    assert_eq!(opened["readable"], json!(true));
+    assert_eq!(office.search(&pptx, "Roadmap", None).expect("search before")["hits"].as_array().expect("hits").len(), 2);
+
+    let report = office.replace(&pptx, "Roadmap", "Plan", &ReplaceOptions::default()).expect("replace pptx");
+    assert_eq!(report["kind"], json!("presentation"));
+    assert_eq!(report["replaced"], json!(2));
+    assert_eq!(report["saved"]["format"], json!("pptx"));
+
+    assert_eq!(office.search(&pptx, "Plan", None).expect("search after")["hits"].as_array().expect("hits").len(), 2);
+    assert!(office.search(&pptx, "Roadmap", None).expect("search stale")["hits"].as_array().expect("hits").is_empty());
+    let outline = office.outline(&pptx, true, None).expect("outline pptx");
+    assert_eq!(outline["outline"]["slides"][0]["title"], json!("Plan"));
+    assert_eq!(outline["outline"]["slides"][1]["title"], json!("Plan review"));
+
+    // --- PDF: no in-place find-and-replace route, so the deepest verified path is asserted.
+    let paper = dir.join("paper.pdf");
+    let request = open_pdf_core::CreateRequest {
+        out: paper.clone(),
+        title: Some("Quarterly".to_owned()),
+        pages: vec!["Alpha page".to_string(), "Beta page".to_string()],
+        overwrite: true,
+        ..Default::default()
+    };
+    open_pdf_core::create(&request).expect("create pdf");
+
+    let route = office.open(&paper, true).expect("route pdf");
+    assert_eq!(route["kind"], json!("pdf"));
+    let probe = office.probe(&paper).expect("probe pdf");
+    assert_eq!(probe["format"], json!("pdf"));
+    assert_eq!(probe["container"], json!("pdf"));
+    assert_eq!(probe["confidence"], json!("verified"));
+    let opened = office.validate(&paper).expect("validate pdf");
+    assert_eq!(opened["readable"], json!(true));
+    assert_eq!(opened["summary"]["pages"], json!(2));
+    assert_eq!(office.search(&paper, "Beta page", None).expect("search pdf")["hits"].as_array().expect("hits").len(), 1);
+    let metadata = office.metadata(&paper).expect("metadata pdf");
+    assert_eq!(metadata["metadata"]["title"], json!("Quarterly"));
+
+    let refused = office.replace(&paper, "Alpha", "First", &ReplaceOptions::default()).expect_err("pdfs have no replace route");
+    assert_eq!(refused.code(), "unsupported-target");
+    assert!(refused.is_usage());
+
+    let marked = dir.join("marked.pdf");
+    open_pdf_core::set_bookmarks(
+        &paper,
+        &marked,
+        &[
+            open_pdf_core::Bookmark { title: "Chapter One".to_owned(), page: 1, depth: Some(0) },
+            open_pdf_core::Bookmark { title: "Chapter Two".to_owned(), page: 2, depth: Some(1) },
+        ],
+    )
+    .expect("bookmark edit");
+    let outline = office.outline(&marked, false, None).expect("outline marked pdf");
+    assert_eq!(outline["outline"]["pages"], json!(2));
+    assert_eq!(outline["outline"]["bookmarks"][0]["title"], json!("Chapter One"));
+    assert_eq!(outline["outline"]["bookmarks"][1]["title"], json!("Chapter Two"));
+    assert_eq!(outline["outline"]["bookmarks"][1]["depth"], json!(2));
+    assert_eq!(office.search(&marked, "Alpha page", None).expect("search marked pdf")["hits"].as_array().expect("hits").len(), 1);
+
+    let extracted = dir.join("paper.md");
+    office.convert(&paper, "md", &extracted, false).expect("pdf to markdown");
+    let markdown = fs::read_to_string(&extracted).expect("read markdown");
+    assert!(markdown.contains("Alpha page") && markdown.contains("Beta page"), "both pages were extracted: {markdown}");
+    let report = office.replace(&extracted, "Alpha", "First", &ReplaceOptions::default()).expect("edit the projection");
+    assert_eq!(report["kind"], json!("word"));
+    assert_eq!(report["replaced"], json!(1));
+    let rebuilt = dir.join("rebuilt.pdf");
+    office.convert(&extracted, "pdf", &rebuilt, false).expect("markdown back to pdf");
+    assert_eq!(office.search(&rebuilt, "First page", None).expect("search rebuilt")["hits"].as_array().expect("hits").len(), 1);
+    assert!(office.search(&rebuilt, "Alpha page", None).expect("search rebuilt stale")["hits"].as_array().expect("hits").is_empty());
+    let stats = office.stats(&rebuilt).expect("stats rebuilt");
+    assert!(stats["stats"]["pages"].as_u64().expect("pages") >= 1, "the rebuilt PDF is a real paged document: {stats}");
+
+    let _ = fs::remove_dir_all(&dir);
+}
