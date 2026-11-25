@@ -3,25 +3,25 @@
   "siblings": {
     "OpenWord": {
       "repo": "https://github.com/nyar-os/OpenWord",
-      "sha": "0d305f2771431f9893e3c63d9cfa398aa82b1ecb"
+      "sha": "00915a8b9d0d0d1e02fd132907cbb21245683fa5"
     },
     "OpenExcel": {
       "repo": "https://github.com/nyar-os/OpenExcel",
-      "sha": "dc0b2f91ef9c8ecf998e55ef9267e65a6236bce1"
+      "sha": "293076ace54e7c10a67456cb03326de355802f8e"
     },
     "OpenPPT": {
       "repo": "https://github.com/nyar-os/OpenPPT",
-      "sha": "ceef1046b7cdc5e4c5e21128204414dd572f1218"
+      "sha": "fa688060ee5d69dd84cf8cc8f280c2dd1bb0c635"
     },
     "OpenPDF": {
       "repo": "https://github.com/nyar-os/OpenPDF",
-      "sha": "1a2c1fa2f78e24926d85750d52c6b5aefb7362af"
+      "sha": "bab32d52309dd266ece2af30df878d80d69c1242"
     }
   },
   "boost": {
     "source": "https://github.com/oovm/rust-boost",
     "revisions": {
-      "1dd547270ef3410e573fad2a00b0814e20f24b20": "pinned by this host and all four engines after the coordinated five-repo bump on 2026-11-25"
+      "0ece26c987992326cfb768934183e99ae473a118": "pinned by this host and all four engines after the coordinated five-repo bump on 2026-11-25"
     }
   }
 }
