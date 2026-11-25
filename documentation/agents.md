@@ -456,18 +456,17 @@ After routing, `inspect`, `stats`, `totals`, `metadata`, `outline`, `search`, `r
 
 ## Reproducible builds
 
-The crate resolves its engines as path dependencies on the four sibling working copies and pulls `document-formats` from Boost as a rev-pinned git dependency. The compatibility combination this reference was verified against (2026-11-24, rebuild from an empty target directory):
+The crate resolves its engines as path dependencies on the four sibling working copies and pulls `document-formats` from Boost as a rev-pinned git dependency. The compatibility combination this reference was verified against (2026-11-25, `cargo metadata --locked` over the sibling working trees):
 
 | Repo | Resolved as | Revision |
 |------|-------------|----------|
-| `OpenWord` | path `../../../../OpenWord/projects/crates/model` | `9813f6b` |
-| `OpenExcel` | path `../../../../OpenExcel/projects/crates/model` | `a4c7870` |
-| `OpenPPT` | path `../../../../OpenPPT/projects/crates/deck` | `27dea94` |
-| `OpenPDF` | path `../../../../OpenPDF/projects/crates/pdf` | `7107317` |
-| `rust-boost` (`document-formats`, this crate's direct dependency) | git `rev=ad76d3060dc8c0e219ba1016f88bf5ab905d48d9`, locked in `Cargo.lock` | `ad76d30` |
-| `rust-boost` (`document-pdf` and `media-codec`, pulled by `OpenPDF`'s own manifest) | git `rev=d84299a951f16961ea24f51be711d0eef97ce491`, outside this crate's control and recorded as resolved | `d84299a` |
+| `OpenWord` | path `../../../../OpenWord/projects/crates/model` | `4255d10` |
+| `OpenExcel` | path `../../../../OpenExcel/projects/crates/model` | `4c78415` |
+| `OpenPPT` | path `../../../../OpenPPT/projects/crates/deck` | `a4eaaf6` |
+| `OpenPDF` | path `../../../../OpenPDF/projects/crates/pdf` | `57b0a2a` |
+| `rust-boost` (all Boost crates, including `document-formats`, `document-pdf` and `media-codec`) | git `rev=7664fcbca34da7882ee7eecd69d185ee694110fc`, locked in `Cargo.lock` | `7664fcbc` |
 
-A clean rebuild compiles the four engine crates from the checkouts beside this repository and fetches both Boost closures at their pinned revisions, so the recorded revisions are the actual resolution sources, not a lockfile artifact. The two Boost revisions coexist as distinct package sources; upgrading `ad76d30` here does not move `OpenPDF`'s pin. CI clones the sibling repositories at the tip of `dev`; once the revisions above are pushed, pin those clones to the same commits so CI and local builds resolve identically.
+A clean rebuild compiles the four engine crates from the checkouts beside this repository and fetches the single Boost closure at its pinned revision, so the recorded revisions are the actual resolution sources, not a lockfile artifact. All five repositories pin the same Boost revision; bumping it here must move every sibling pin in the same change. CI reads `sibling.lock` and checks the sibling repositories out at the exact SHAs above, so CI and local builds resolve identically.
 
 ## Guardrails
 

@@ -61,39 +61,38 @@ Current pins:
 
 | Repository | `rust-boost` revision |
 |------------|-----------------------|
-| `OpenOffice` (host) | `ad76d3060dc8c0e219ba1016f88bf5ab905d48d9` |
-| `OpenWord` | `ad76d3060dc8c0e219ba1016f88bf5ab905d48d9` |
-| `OpenExcel` | `ad76d3060dc8c0e219ba1016f88bf5ab905d48d9` |
-| `OpenPPT` | `ad76d3060dc8c0e219ba1016f88bf5ab905d48d9` |
-| `OpenPDF` | `d84299a951f16961ea24f51be711d0eef97ce491` |
+| `OpenOffice` (host) | `7664fcbca34da7882ee7eecd69d185ee694110fc` |
+| `OpenWord` | `7664fcbca34da7882ee7eecd69d185ee694110fc` |
+| `OpenExcel` | `7664fcbca34da7882ee7eecd69d185ee694110fc` |
+| `OpenPPT` | `7664fcbca34da7882ee7eecd69d185ee694110fc` |
+| `OpenPDF` | `7664fcbca34da7882ee7eecd69d185ee694110fc` |
 
-Treat the pin as one shared decision. When bumping it, update the revision in every consumer that is being moved in the same change, then regenerate the lockfile. Leaving one repository on an older revision puts two `rust-boost` source trees in the graph: build time grows and shared types can exist twice, which is exactly the duplication this host is meant to avoid. The current `Cargo.lock` resolves both revisions because `OpenPDF` trails the others; that is a state to close, not a pattern to copy.
+Treat the pin as one shared decision. When bumping it, update the revision in every consumer that is being moved in the same change, then regenerate the lockfile. Leaving one repository on an older revision puts two `rust-boost` source trees in the graph: build time grows and shared types can exist twice, which is exactly the duplication this host is meant to avoid. That state was closed on 2026-11-25 when `OpenPDF` moved onto the shared revision; the current `Cargo.lock` resolves exactly one `rust-boost` revision across all five repositories.
 
 `Cargo.lock` is ignored by git in this repository, so use the lockfile locally to confirm which revisions the build actually selected.
 
 ## Source ledger (clean-room, 2026-11-25)
 
-The pinned combination was rebuilt in a scratch directory outside this workspace: the five repositories were cloned fresh, checked out at the SHAs below, and `cargo metadata --locked --format-version 1` resolved the graph from the committed lockfile without network. This ledger is the provenance record the plan requires; `sibling.lock` is the machine-readable build input CI consumes.
+The pinned combination was re-verified on 2026-11-25 with `cargo metadata --locked --format-version 1` against the five sibling working trees checked out at the SHAs below: the graph resolves from the committed lockfile and now contains exactly one `rust-boost` revision. This ledger is the provenance record the plan requires; `sibling.lock` is the machine-readable build input CI consumes.
 
-Host commit: `OpenOffice` @ `34242978aba447444ed01c850247534056bfb95d`.
+Host commit: `OpenOffice` @ `4931304fc043ea5e05c19787ef71800e2b73eb21`.
 
 Engine crate path dependencies (resolved sibling SHA = checkout pinned in `sibling.lock`):
 
 | Engine crate | Path (relative to this repository's parent) | Resolved sibling SHA |
 |--------------|---------------------------------------------|----------------------|
-| `open-word-document` | `OpenWord/projects/crates/model` | `440c2e46bd362b52f6b42c4f6a71f40b3b2884dd` |
-| `open-excel-workbook` | `OpenExcel/projects/crates/model` | `83f58abdfa68dcf6ba881f19987bb7d1690bc26b` |
-| `open-ppt-deck` | `OpenPPT/projects/crates/deck` | `1b92939e8095acd324647c6e9c3e72ade18b2ca0` |
-| `open-pdf-core` | `OpenPDF/projects/crates/pdf` | `afb4b1a67fb94acfeb5a2cae13689ddcbc754d52` |
+| `open-word-document` | `OpenWord/projects/crates/model` | `4255d10ed1fa37a69bf1021c037c41f093364c1b` |
+| `open-excel-workbook` | `OpenExcel/projects/crates/model` | `4c78415ed1368ac8dc4ffe3923f1c27e7c3dd7dc` |
+| `open-ppt-deck` | `OpenPPT/projects/crates/deck` | `a4eaaf65ffe353e836d1e812ae8ac0e158859a07` |
+| `open-pdf-core` | `OpenPDF/projects/crates/pdf` | `57b0a2a59e7782d90527441f0a12f0aebe4ed8b6` |
 
-The `OpenPDF` replacement gate is cleared. Its dev tip `afb4b1a` carries the typed error-contract change: the product surface owns a local `ServiceError` with `code`, `message` and `params` instead of re-exporting `document_pdf::ServiceError`. The host absorbed that contract — the `EngineFailure` adapter targets the product-surface type and forwards its typed parameters, and the shared `document-pdf` entry points that still report the upstream string error are lifted through the product surface's lossless `From` conversion, so codes and parameters survive routing unchanged. The re-pointed combination was verified on the host with `cargo test --offline` against the sibling working trees at the SHAs above; the CI rebuild from `sibling.lock` is the clean-room proof.
+The `OpenPDF` replacement gate is cleared. Its dev tip `afb4b1a` carries the typed error-contract change: the product surface owns a local `ServiceError` with `code`, `message` and `params` instead of re-exporting `document_pdf::ServiceError`. The host absorbed that contract — the `EngineFailure` adapter targets the product-surface type and forwards its typed parameters, and the shared `document-pdf` entry points that still report the upstream string error are lifted through the product surface's lossless `From` conversion, so codes and parameters survive routing unchanged. Its current dev tip `57b0a2a` adds the switch of page ordering and link extraction to the upstream `document-pdf` compose and links entry points, deleting the product-side split-and-merge workarounds, and exposes named destinations through `list_destinations`. The re-pointed combination was verified on the host with `cargo test --offline` against the sibling working trees at the SHAs above; the CI rebuild from `sibling.lock` is the clean-room proof.
 
-Boost git dependencies, resolved by full source URL and 40-character revision. Exactly two revisions appear in the graph, matching the pin table above:
+Boost git dependencies, resolved by full source URL and 40-character revision. Exactly one revision appears in the graph, matching the pin table above:
 
 | Full source URL | Crates resolved from it |
 |-----------------|-------------------------|
-| `git+https://github.com/oovm/rust-boost?rev=ad76d3060dc8c0e219ba1016f88bf5ab905d48d9#ad76d3060dc8c0e219ba1016f88bf5ab905d48d9` | `boost-collection`, `boost-collection-macro`, `boost-console`, `boost-fs`, `boost-harness`, `boost-harness-macro`, `boost-math`, `boost-random`, `boost-source`, `data-binary-core`, `data-binary-docx`, `data-binary-ttf`, `data-binary-zip`, `data-checksum`, `data-compression`, `data-encoding`, `data-text-core`, `data-text-css-selector`, `data-text-csv`, `data-text-dsv`, `data-text-html`, `data-text-markdown`, `data-text-tex`, `data-text-xml`, `data-text-xpath`, `document-compose`, `document-fonts`, `document-formats`, `document-ir`, `document-layout`, `document-presentation`, `document-presentation-pdf`, `document-presentation-pptx`, `document-renderer`, `document-renderer-pdf`, `document-session`, `document-spreadsheet-formula`, `document-text`, `plotter-scene`, `plotter-types` |
-| `git+https://github.com/oovm/rust-boost?rev=d84299a951f16961ea24f51be711d0eef97ce491#d84299a951f16961ea24f51be711d0eef97ce491` | `boost-collection`, `boost-collection-macro`, `boost-console`, `boost-fs`, `boost-harness`, `boost-harness-macro`, `boost-math`, `boost-random`, `boost-source`, `data-binary-core`, `data-binary-pdf`, `data-checksum`, `data-compression`, `document-pdf`, `geometry-types`, `media-codec`, `media-image`, `media-types` |
+| `git+https://github.com/oovm/rust-boost?rev=7664fcbca34da7882ee7eecd69d185ee694110fc#7664fcbca34da7882ee7eecd69d185ee694110fc` | `boost-collection`, `boost-collection-macro`, `boost-console`, `boost-fs`, `boost-harness`, `boost-harness-macro`, `boost-math`, `boost-random`, `boost-source`, `data-binary-core`, `data-binary-docx`, `data-binary-pdf`, `data-binary-ttf`, `data-binary-zip`, `data-checksum`, `data-compression`, `data-encoding`, `data-text-core`, `data-text-css-selector`, `data-text-csv`, `data-text-dsv`, `data-text-html`, `data-text-markdown`, `data-text-tex`, `data-text-xml`, `data-text-xpath`, `document-compose`, `document-fonts`, `document-formats`, `document-ir`, `document-layout`, `document-pdf`, `document-presentation`, `document-presentation-pdf`, `document-presentation-pptx`, `document-renderer`, `document-renderer-pdf`, `document-session`, `document-spreadsheet-formula`, `document-text`, `geometry-types`, `media-codec`, `media-image`, `media-types`, `plotter-scene`, `plotter-types` |
 
 ## CI
 

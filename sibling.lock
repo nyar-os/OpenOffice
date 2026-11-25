@@ -3,26 +3,25 @@
   "siblings": {
     "OpenWord": {
       "repo": "https://github.com/nyar-os/OpenWord",
-      "sha": "440c2e46bd362b52f6b42c4f6a71f40b3b2884dd"
+      "sha": "4255d10ed1fa37a69bf1021c037c41f093364c1b"
     },
     "OpenExcel": {
       "repo": "https://github.com/nyar-os/OpenExcel",
-      "sha": "83f58abdfa68dcf6ba881f19987bb7d1690bc26b"
+      "sha": "4c78415ed1368ac8dc4ffe3923f1c27e7c3dd7dc"
     },
     "OpenPPT": {
       "repo": "https://github.com/nyar-os/OpenPPT",
-      "sha": "1b92939e8095acd324647c6e9c3e72ade18b2ca0"
+      "sha": "a4eaaf65ffe353e836d1e812ae8ac0e158859a07"
     },
     "OpenPDF": {
       "repo": "https://github.com/nyar-os/OpenPDF",
-      "sha": "afb4b1a67fb94acfeb5a2cae13689ddcbc754d52"
+      "sha": "57b0a2a59e7782d90527441f0a12f0aebe4ed8b6"
     }
   },
   "boost": {
     "source": "https://github.com/oovm/rust-boost",
     "revisions": {
-      "ad76d3060dc8c0e219ba1016f88bf5ab905d48d9": "pinned by OpenWord, OpenExcel, OpenPPT and this host",
-      "d84299a951f16961ea24f51be711d0eef97ce491": "pinned by OpenPDF"
+      "7664fcbca34da7882ee7eecd69d185ee694110fc": "pinned by OpenWord, OpenExcel, OpenPPT, OpenPDF and this host"
     }
   }
 }
