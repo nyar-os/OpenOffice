@@ -3,26 +3,25 @@
   "siblings": {
     "OpenWord": {
       "repo": "https://github.com/nyar-os/OpenWord",
-      "sha": "ad76e2f080b8f35bb53160f673a88b83a42cb6a3"
+      "sha": "0d305f2771431f9893e3c63d9cfa398aa82b1ecb"
     },
     "OpenExcel": {
       "repo": "https://github.com/nyar-os/OpenExcel",
-      "sha": "01639b5c04b80468dfea05154c42f2e33c674898"
+      "sha": "dc0b2f91ef9c8ecf998e55ef9267e65a6236bce1"
     },
     "OpenPPT": {
       "repo": "https://github.com/nyar-os/OpenPPT",
-      "sha": "c3748ee06d07a5625ec519549c7ee7f13abd341a"
+      "sha": "ceef1046b7cdc5e4c5e21128204414dd572f1218"
     },
     "OpenPDF": {
       "repo": "https://github.com/nyar-os/OpenPDF",
-      "sha": "d4f5dce395b833b616adf3174fa9e4744842d5e4"
+      "sha": "1a2c1fa2f78e24926d85750d52c6b5aefb7362af"
     }
   },
   "boost": {
     "source": "https://github.com/oovm/rust-boost",
     "revisions": {
-      "7664fcbca34da7882ee7eecd69d185ee694110fc": "pinned by this host, OpenWord, OpenExcel and OpenPDF",
-      "9fd602b93a9a456da4ba824e22c90b600f12fdf0": "pinned by OpenPPT at dev tip c3748ee, a descendant of 7664fcbc; recorded as fact until a coordinated five-repo bump"
+      "1dd547270ef3410e573fad2a00b0814e20f24b20": "pinned by this host and all four engines after the coordinated five-repo bump on 2026-11-25"
     }
   }
 }

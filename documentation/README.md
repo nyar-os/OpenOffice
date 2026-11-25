@@ -61,13 +61,13 @@ Current pins:
 
 | Repository | `rust-boost` revision |
 |------------|-----------------------|
-| `OpenOffice` (host) | `7664fcbca34da7882ee7eecd69d185ee694110fc` |
-| `OpenWord` | `1c2dbba30d576794bbbe51fdd2e9f5f4f8fe59d1` |
-| `OpenExcel` | `0ded81d40572c38177040e0bfaff7a0f8c78769c` |
-| `OpenPPT` | `0270cfe33e30f4a56bd2001679d8ec21dab7dcd0` |
-| `OpenPDF` | `2246d76b9ec083f738e784e8af6ec0182f90b33f` |
+| `OpenOffice` (host) | `1dd547270ef3410e573fad2a00b0814e20f24b20` |
+| `OpenWord` | `1dd547270ef3410e573fad2a00b0814e20f24b20` |
+| `OpenExcel` | `1dd547270ef3410e573fad2a00b0814e20f24b20` |
+| `OpenPPT` | `1dd547270ef3410e573fad2a00b0814e20f24b20` |
+| `OpenPDF` | `1dd547270ef3410e573fad2a00b0814e20f24b20` |
 
-Treat the pin as one shared decision. When bumping it, update the revision in every consumer that is being moved in the same change, then regenerate the lockfile. Leaving one repository on an older revision puts two `rust-boost` source trees in the graph: build time grows and shared types can exist twice, which is exactly the duplication this host is meant to avoid. As of the 2026-11-25 re-verification below each engine has moved its own pin forward past the host's `7664fcbc`, so the graph now carries five `rust-boost` revisions instead of the previous two. The duplication is recorded here as fact and not masked by `cargo update`; closing it is a coordinated five-repo bump outside this host's control.
+Treat the pin as one shared decision. When bumping it, update the revision in every consumer that is being moved in the same change, then regenerate the lockfile. Leaving one repository on an older revision puts two `rust-boost` source trees in the graph: build time grows and shared types can exist twice, which is exactly the duplication this host is meant to avoid. The coordinated five-repo bump landed on 2026-11-25: this host and all four engines now pin the same revision `1dd54727`, so the graph carries a single `rust-boost` tree again.
 
 `Cargo.lock` is ignored by git in this repository, so use the lockfile locally to confirm which revisions the build actually selected.
 
@@ -77,7 +77,7 @@ The pinned combination was re-verified on 2026-11-25 17:39 +08:00 (sibling `orig
 
 Host commit: `OpenOffice` @ `daea9ab073f0f35aa4bdca87d6c18a60dfb19e8f`.
 
-Engine crate path dependencies (resolved sibling SHA = live `origin/dev` tip at the fetch moment; `sibling.lock` still carries the previous combination `ad76e2f` / `01639b5` / `c3748ee` / `d4f5dce`, and re-pointing it is a separate accounting change):
+Engine crate path dependencies (resolved sibling SHA = live `origin/dev` tip at the fetch moment; `sibling.lock` carried the previous combination `ad76e2f` / `01639b5` / `c3748ee` / `d4f5dce` at that moment and has since been re-pointed by the convergence commit below):
 
 | Engine crate | Path (relative to this repository's parent) | Resolved sibling SHA |
 |--------------|---------------------------------------------|----------------------|
@@ -92,11 +92,15 @@ Boost git dependencies, resolved by full source URL and 40-character revision. F
 
 | Full source URL | Crates resolved from it |
 |-----------------|-------------------------|
-| `git+https://github.com/oovm/rust-boost?rev=7664fcbca34da7882ee7eecd69d185ee694110fc#7664fcbca34da7882ee7eecd69d185ee694110fc` (host) | `boost-collection`, `boost-collection-macro`, `boost-console`, `boost-fs`, `boost-harness`, `boost-harness-macro`, `boost-math`, `boost-random`, `boost-source`, `data-binary-core`, `data-binary-zip`, `data-checksum`, `data-compression`, `document-formats`, `document-ir` |
+| `git+https://github.com/oovm/rust-boost?rev=1dd547270ef3410e573fad2a00b0814e20f24b20#1dd547270ef3410e573fad2a00b0814e20f24b20` (host) | `boost-collection`, `boost-collection-macro`, `boost-console`, `boost-fs`, `boost-harness`, `boost-harness-macro`, `boost-math`, `boost-random`, `boost-source`, `data-binary-core`, `data-binary-zip`, `data-checksum`, `data-compression`, `document-formats`, `document-ir` |
 | `git+https://github.com/oovm/rust-boost?rev=1c2dbba30d576794bbbe51fdd2e9f5f4f8fe59d1#1c2dbba30d576794bbbe51fdd2e9f5f4f8fe59d1` (OpenWord) | `boost-collection`, `boost-collection-macro`, `boost-console`, `boost-fs`, `boost-harness`, `boost-harness-macro`, `boost-math`, `boost-random`, `boost-source`, `data-binary-core`, `data-binary-docx`, `data-binary-zip`, `data-checksum`, `data-compression`, `data-text-core`, `data-text-css-selector`, `data-text-html`, `data-text-markdown`, `data-text-tex`, `data-text-xml`, `data-text-xpath`, `document-formats`, `document-ir`, `document-session` |
 | `git+https://github.com/oovm/rust-boost?rev=0ded81d40572c38177040e0bfaff7a0f8c78769c#0ded81d40572c38177040e0bfaff7a0f8c78769c` (OpenExcel) | `boost-collection`, `boost-collection-macro`, `boost-console`, `boost-fs`, `boost-harness`, `boost-harness-macro`, `boost-math`, `boost-random`, `boost-source`, `data-binary-core`, `data-binary-docx`, `data-binary-zip`, `data-checksum`, `data-compression`, `data-text-core`, `data-text-csv`, `data-text-dsv`, `data-text-xml`, `data-text-xpath`, `document-formats`, `document-ir`, `document-session`, `document-spreadsheet-formula` |
 | `git+https://github.com/oovm/rust-boost?rev=0270cfe33e30f4a56bd2001679d8ec21dab7dcd0#0270cfe33e30f4a56bd2001679d8ec21dab7dcd0` (OpenPPT) | `boost-collection`, `boost-collection-macro`, `boost-console`, `boost-fs`, `boost-harness`, `boost-harness-macro`, `boost-math`, `boost-random`, `boost-source`, `data-binary-core`, `data-binary-docx`, `data-binary-ttf`, `data-binary-zip`, `data-checksum`, `data-compression`, `data-encoding`, `data-text-core`, `data-text-css-selector`, `data-text-html`, `data-text-markdown`, `data-text-tex`, `data-text-xml`, `data-text-xpath`, `document-compose`, `document-fonts`, `document-formats`, `document-ir`, `document-layout`, `document-presentation`, `document-presentation-pdf`, `document-presentation-pptx`, `document-renderer`, `document-renderer-pdf`, `document-text`, `plotter-scene`, `plotter-types` |
 | `git+https://github.com/oovm/rust-boost?rev=2246d76b9ec083f738e784e8af6ec0182f90b33f#2246d76b9ec083f738e784e8af6ec0182f90b33f` (OpenPDF) | `boost-collection`, `boost-collection-macro`, `boost-console`, `boost-fs`, `boost-harness`, `boost-harness-macro`, `boost-math`, `boost-random`, `boost-source`, `data-binary-core`, `data-binary-pdf`, `data-checksum`, `data-compression`, `document-pdf`, `geometry-types`, `media-codec`, `media-image`, `media-types` |
+
+### Convergence re-verification (2026-11-25 18:40 +08:00)
+
+The coordinated five-repo bump closed the duplication recorded above. All five repositories now pin the single `rust-boost` revision `1dd547270ef3410e573fad2a00b0814e20f24b20`, and `sibling.lock` has been re-pointed to the engine tips that carry it: `OpenWord` `0d305f2771431f9893e3c63d9cfa398aa82b1ecb`, `OpenExcel` `dc0b2f91ef9c8ecf998e55ef9267e65a6236bce1`, `OpenPPT` `ceef1046b7cdc5e4c5e21128204414dd572f1218`, `OpenPDF` `1a2c1fa2f78e24926d85750d52c6b5aefb7362af`. Each engine repository ran its full `cargo test --workspace` green at the unified revision (OpenExcel 125, OpenPDF 78, OpenPPT 79, OpenWord 91 unchanged), and this host passed 62 tests (61 in `tests/office.rs`, 1 in `sub_projects`) with the host manifest on `1dd54727`. The five-revision crate tables above remain the historical record of the 17:39 state.
 
 ## CI
 
