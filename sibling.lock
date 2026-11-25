@@ -7,7 +7,7 @@
     },
     "OpenExcel": {
       "repo": "https://github.com/nyar-os/OpenExcel",
-      "sha": "293076ace54e7c10a67456cb03326de355802f8e"
+      "sha": "5a426d2d5529b41ec31a56b096729ad915694511"
     },
     "OpenPPT": {
       "repo": "https://github.com/nyar-os/OpenPPT",
