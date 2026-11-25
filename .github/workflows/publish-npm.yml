@@ -1,0 +1,44 @@
+name: publish-npm
+
+# Trusted Publisher contract (sole npm trusted workflow — keep this filename):
+#   file = publish-npm.yml
+#   repo = nyar-os/OpenOffice
+#   env  = NPM_PUBLISH
+#
+# `@wae/open-office` publishes only through npm Trusted Publisher (OIDC) on tag
+# push. Local `nifty publish --placeholder` is only for the 0.0.0 stub.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag (for example v0.0.1). Its version is published."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish-npm-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: NPM_PUBLISH
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Upgrade npm for Trusted Publisher support
+        run: npm install --global npm@11
+      - name: Publish the package to npm
+        run: npx -y -p @doki-land/nifty@0.1.16 nifty publish --access public --version="${RELEASE_TAG#v}"

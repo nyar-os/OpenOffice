@@ -1,8 +1,10 @@
 {
     "name": "@wae/open-office",
+    "version": "0.0.0",
     "description": "Thin all-in-one host bundling OpenWord, OpenExcel, OpenPPT, and OpenPDF into a single binary covering all Office formats",
     "keywords": ["office", "docx", "xlsx", "pptx", "pdf"],
-    "private": true,
+    "license": "MPL-2.0",
+    "files": [],
     "scripts": {
         "doc": "cargo doc --no-deps --all-features",
         "test": "cargo test --release",
@@ -12,6 +14,10 @@
         "u": "cargo upgrade --workspace"
     },
     "devDependencies": {
-        "@doki-land/nifty": "^0.1.15"
+        "@doki-land/nifty": "^0.1.16"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/nyar-os/OpenOffice.git"
     }
 }
